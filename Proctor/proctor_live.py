@@ -33,8 +33,6 @@ def enhance_frame(image):
     new = cv2.filter2D(src=image, ddepth=-1, kernel=kernel)
     return new
 
-
-
 class LiveProctor:
     def __init__(self, target_path, yolo_model, media_pipe):
         self.target_path = target_path
