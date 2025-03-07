@@ -117,10 +117,14 @@ def handYOLO(frame, model):
             confidence = box.conf.item()
             class_id = int(box.cls.item())
             item_name = model.names[class_id]
-            
+            print(f"Detected: {item_name} with confidence: {confidence:.2f}")
+
+            if(confidence < 0.4):
+                continue
             output['prohibited_item'] = item_name
+            
             bbox = [int(x1), int(y1), int(x2), int(y2)]
-            yolo_bboxes.append(bbox)
+            yolo_bboxes.append(bbox) #gets added to list to process hands
             output['illegal_objects'] += 1
             
             # Draw rectangle and label for illegal object

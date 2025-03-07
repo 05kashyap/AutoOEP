@@ -28,36 +28,37 @@ def enhance_frame(image):
     return new
 
 def preprocess_for_object_detection(image):
-    """
-    Enhance image to improve object detection by:
-    1. Adjusting contrast and brightness
-    2. Reducing noise
-    3. Enhancing edges
-    """
-    # Convert to RGB if needed (YOLO typically works with RGB)
-    if len(image.shape) == 3 and image.shape[2] == 3:
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    else:
-        image_rgb = image.copy()
+    # """
+    # Enhance image to improve object detection by:
+    # 1. Adjusting contrast and brightness
+    # 2. Reducing noise
+    # 3. Enhancing edges
+    # """
+    # # Convert to RGB if needed (YOLO typically works with RGB)
+    # if len(image.shape) == 3 and image.shape[2] == 3:
+    #     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    # else:
+    #     image_rgb = image.copy()
     
-    # Increase contrast and brightness
-    alpha = 1.4  # Contrast control (1.0-3.0)
-    beta = 15    # Brightness control (0-100)
-    contrast_bright = cv2.convertScaleAbs(image_rgb, alpha=alpha, beta=beta)
+    # # Increase contrast and brightness
+    # alpha = 1.4  # Contrast control (1.0-3.0)
+    # beta = 15    # Brightness control (0-100)
+    # contrast_bright = cv2.convertScaleAbs(image_rgb, alpha=alpha, beta=beta)
     
-    # Reduce noise while preserving edges
-    denoised = cv2.fastNlMeansDenoisingColored(contrast_bright, None, 10, 10, 7, 21)
+    # # Reduce noise while preserving edges
+    # denoised = cv2.fastNlMeansDenoisingColored(contrast_bright, None, 10, 10, 7, 21)
     
-    # Enhance edges
-    kernel_sharpen = np.array([[-1,-1,-1], 
-                              [-1, 9,-1],
-                              [-1,-1,-1]])
-    sharpened = cv2.filter2D(denoised, -1, kernel_sharpen)
+    # # Enhance edges
+    # kernel_sharpen = np.array([[-1,-1,-1], 
+    #                           [-1, 9,-1],
+    #                           [-1,-1,-1]])
+    # sharpened = cv2.filter2D(denoised, -1, kernel_sharpen)
     
-    # Convert back to BGR for OpenCV operations
-    if len(image.shape) == 3 and image.shape[2] == 3:
-        return cv2.cvtColor(sharpened, cv2.COLOR_RGB2BGR)
-    return sharpened
+    # # Convert back to BGR for OpenCV operations
+    # if len(image.shape) == 3 and image.shape[2] == 3:
+    #     return cv2.cvtColor(sharpened, cv2.COLOR_RGB2BGR)
+    # return sharpened
+    return image
 
 
 class StaticProctor:
@@ -72,20 +73,33 @@ class StaticProctor:
             
         self.landmarker = FaceLandmarker.create_from_options(self.options)
         
-    def process_frames(self, target_frame, input_frame):
+    def process_frames(self, target_frame, face_frame, hand_frame):
         output = {}
         
-        preprocessed_frame = preprocess_for_object_detection(input_frame)
-
         # Hand detection
-        hand_dict = inference(preprocessed_frame, self.yolo_model, self.media_pipe)
+        hand_dict = inference(preprocess_for_object_detection(hand_frame), self.yolo_model, self.media_pipe)
         if hand_dict:
             hand_keys = {
-                'hand_detected': 'Hand Detected',
-                'prohibited_item_use': 'Prohibited Item Use', 
-                'distance': 'Distance',
-                'illegal_objects': 'Illegal Objects',
-                'prohibited_item': 'Prohibited Item'
+                'hand_detected': 'H-Hand Detected',
+                'prohibited_item_use': 'H-Prohibited Item Use', 
+                'distance': 'H-Distance',
+                'illegal_objects': 'H-Illegal Objects',
+                'prohibited_item': 'H-Prohibited Item'
+            }
+            
+            for src_key, dst_key in hand_keys.items():
+                if src_key in hand_dict:
+                    output[dst_key] = hand_dict[src_key]
+
+        # Hand detection
+        hand_dict = inference(preprocess_for_object_detection(face_frame), self.yolo_model, self.media_pipe)
+        if hand_dict:
+            hand_keys = {
+                'hand_detected': 'F-Hand Detected',
+                'prohibited_item_use': 'F-Prohibited Item Use', 
+                'distance': 'F-Distance',
+                'illegal_objects': 'F-Illegal Objects',
+                'prohibited_item': 'F-Prohibited Item'
             }
             
             for src_key, dst_key in hand_keys.items():
@@ -93,12 +107,12 @@ class StaticProctor:
                     output[dst_key] = hand_dict[src_key]
 
         # Face verification
-        processed_frame = enhance_frame(cv2.cvtColor(input_frame, cv2.COLOR_BGR2RGB))
+        processed_face_frame = enhance_frame(cv2.cvtColor(face_frame, cv2.COLOR_BGR2RGB))
         processed_target = enhance_frame(cv2.cvtColor(target_frame, cv2.COLOR_BGR2RGB)) if target_frame.dtype != np.uint8 else target_frame
         
         output['Identity'] = DeepFace.verify(
             img1_path=processed_target, 
-            img2_path=processed_frame,
+            img2_path=processed_face_frame,
             model_name='ArcFace',
             detector_backend='mediapipe',
             normalization='ArcFace',
@@ -106,11 +120,11 @@ class StaticProctor:
             enforce_detection=False)['verified']
 
         # Face landmarks - for static images
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=input_frame)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=face_frame)
         landmark_result = self.landmarker.detect(mp_image)
         
         if landmark_result and landmark_result.face_landmarks:
-            face_details = FaceDetails(landmark_result, input_frame)
+            face_details = FaceDetails(landmark_result, face_frame)
             output['Face Direction'] = face_details.gaze_direction
             output['Face Zone'] = face_details.gaze_zone
             output['Eye Direction'] = face_details.iris_pos
@@ -119,7 +133,7 @@ class StaticProctor:
 
         # Calculate cheat score
         output['Cheat Score'] = calculate_cheat_score(output)
-        return output, preprocessed_frame
+        return output
 
     def __del__(self):
         # Cleanup
@@ -130,7 +144,7 @@ class StaticProctor:
 def example_usage():
     # Example of how to use the StaticProctor
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = YOLO('/home/kashyap/Documents/Projects/PROCTOR/CheatusDeletus/Proctor/OEP_YOLOv11n.pt')
+    model = YOLO('OEP_YOLOv11n.pt')
 
     
     mpHands = mp.solutions.hands
@@ -144,12 +158,13 @@ def example_usage():
     }
 
     # Load target and input frames
-    target_frame = cv2.imread('Images/facecam1.png')
-    input_frame = cv2.imread('Images/handcam2.png')
+    target_frame = cv2.imread('Images/identity.jpeg')
+    face_frame = cv2.imread('Images/facecam1.png')
+    hand_frame = cv2.imread('Images/handcam3.png')
     
     # Process frames
     proctor = StaticProctor(model, media_pipe_dict)
-    result, preprocessed = proctor.process_frames(target_frame, input_frame)
+    result = proctor.process_frames(target_frame, face_frame, hand_frame)
     print(result)
     # cv2.imshow("Original", input_frame)
     # cv2.imshow("Preprocessed", preprocessed)
