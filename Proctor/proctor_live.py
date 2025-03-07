@@ -8,6 +8,7 @@ import mediapipe as mp
 from cheat_prob import calculate_cheat_score
 from FaceDetailsCalculator import FaceDetails
 import torch 
+from ultralytics import YOLO
 
 BaseOptions = mp.tasks.BaseOptions
 FaceLandmarker = mp.tasks.vision.FaceLandmarker
@@ -121,9 +122,8 @@ class LiveProctor:
 
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = torch.hub.load('ultralytics/yolov5', 'custom', 
-                          path='/home/kashyap/Documents/Projects/PROCTOR/YOLO_Weights/best.pt', #change this acc to ur path
-                          force_reload=False).to(device)
+    model = YOLO('/home/kashyap/Documents/Projects/PROCTOR/CheatusDeletus/Proctor/OEP_YOLOv11n.pt')
+
     mpHands = mp.solutions.hands
     media_pipe_dict = {
         'mpHands': mpHands,

@@ -12,7 +12,7 @@ def initialize():
     hands = mpHands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.5, min_tracking_confidence=0.5)
     mpdraw = mp.solutions.drawing_utils
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = torch.hub.load('ultralytics/yolov5','custom', path='best.pt', force_reload=False).to(device)
+    model = torch.hub.load('ultralytics/yolov5','custom', path='/home/kashyap/Documents/Projects/PROCTOR/CheatusDeletus/Models/OEP_YOLO/best.pt', force_reload=False).to(device)
     mylmList = []
 
 def calculate_distance(x1, y1, x2, y2):
@@ -128,4 +128,4 @@ def main(image_path):
     print(output)
 
 if __name__ == "__main__":
-    main('test.png')
+    main('/home/kashyap/Documents/Projects/PROCTOR/CheatusDeletus/Proctor/Images/handcam1.png')
