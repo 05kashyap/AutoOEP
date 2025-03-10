@@ -141,7 +141,7 @@ class StaticProctor:
             self.landmarker.close()
 
 
-def example_usage():
+def test():
     # Example of how to use the StaticProctor
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model = YOLO('OEP_YOLOv11n.pt')
@@ -172,4 +172,4 @@ def example_usage():
     # cv2.destroyAllWindows()
 
 if __name__ == '__main__':
-    example_usage()
+    test()
