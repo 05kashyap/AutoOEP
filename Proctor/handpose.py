@@ -117,7 +117,7 @@ def handYOLO(frame, model):
             confidence = box.conf.item()
             class_id = int(box.cls.item())
             item_name = model.names[class_id]
-            print(f"Detected: {item_name} with confidence: {confidence:.2f}")
+            # print(f"Detected: {item_name} with confidence: {confidence:.2f}")
 
             if(confidence < 0.4):
                 continue
