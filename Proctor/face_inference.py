@@ -67,7 +67,7 @@ def get_landmark_details(result, input_image: mp.Image, timestamp_ms: int):
 def get_face_inference(frame, target_frame, landmarker):
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
     face_landmarker_result = landmarker.detect(mp_image)
-    landmark_details = get_landmark_details(face_landmarker_result, mp_image, 0)
+    output_details = get_landmark_details(face_landmarker_result, mp_image, 0)
     verification_result = verify_id(mp_image.numpy_view().copy())
     output_details['verification_result'] = verification_result
     return output_details
