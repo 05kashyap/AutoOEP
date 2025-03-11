@@ -78,7 +78,7 @@ def extract_hand_landmarks(image):
 
     return results.multi_hand_landmarks
 
-def handYOLO(frame, model):
+def handYOLO(frame, model, confidence_threshold=0.4):
     """
     Detects hands and prohibited items in a given frame using YOLOv11 object detection and Mediapipe Hands.
 
@@ -95,7 +95,7 @@ def handYOLO(frame, model):
         - 'illegal_objects': The number of prohibited items detected in the frame.
     """
     output = {}
-    output['prohibited_item'] = None
+    output['prohibited_item'] = []
     output['hand_detected'] = False
     output['distance'] = None
     output['Prohibited Item Use'] = False
@@ -119,9 +119,9 @@ def handYOLO(frame, model):
             item_name = model.names[class_id]
             # print(f"Detected: {item_name} with confidence: {confidence:.2f}")
 
-            if(confidence < 0.4):
+            if(confidence < confidence_threshold):
                 continue
-            output['prohibited_item'] = item_name
+            output['prohibited_item'].append(item_name)
             
             bbox = [int(x1), int(y1), int(x2), int(y2)]
             yolo_bboxes.append(bbox) #gets added to list to process hands
