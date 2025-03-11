@@ -6,12 +6,16 @@ from cheat_prob import calculate_cheat_score
 from FaceDetailsCalculator import FaceDetails
 import torch
 from handpose import inference
-from ultralytics import YOLO  
+from ultralytics import YOLO
+from face_inference import get_face_inference
 
 BaseOptions = mp.tasks.BaseOptions
 FaceLandmarker = mp.tasks.vision.FaceLandmarker
 FaceLandmarkerOptions = mp.tasks.vision.FaceLandmarkerOptions
 FaceLandmarkerResult = mp.tasks.vision.FaceLandmarkerResult
+FaceDetector = mp.tasks.vision.FaceDetector
+FaceDetectorOptions = mp.tasks.vision.FaceDetectorOptions
+FaceDetectorResult = mp.tasks.vision.FaceDetectorResult
 VisionRunningMode = mp.tasks.vision.RunningMode
 
 # Path to the face landmark model
@@ -68,8 +72,9 @@ class StaticProctor:
         
         # Initialize MediaPipe with IMAGE mode instead of LIVE_STREAM
         self.options = FaceLandmarkerOptions(
-            base_options=BaseOptions(model_asset_path=model_path),
-            running_mode=VisionRunningMode.IMAGE)
+                    base_options=BaseOptions(model_asset_path=model_path),
+                    running_mode=VisionRunningMode.IMAGE,
+                    num_faces = 3)
             
         self.landmarker = FaceLandmarker.create_from_options(self.options)
         
@@ -107,29 +112,35 @@ class StaticProctor:
                     output[dst_key] = hand_dict[src_key]
 
         # Face verification
-        processed_face_frame = enhance_frame(cv2.cvtColor(face_frame, cv2.COLOR_BGR2RGB))
-        processed_target = enhance_frame(cv2.cvtColor(target_frame, cv2.COLOR_BGR2RGB)) if target_frame.dtype != np.uint8 else target_frame
+        # processed_face_frame = enhance_frame(cv2.cvtColor(face_frame, cv2.COLOR_BGR2RGB))
+        # processed_target = enhance_frame(cv2.cvtColor(target_frame, cv2.COLOR_BGR2RGB)) if target_frame.dtype != np.uint8 else target_frame
         
-        output['Identity'] = DeepFace.verify(
-            img1_path=processed_target, 
-            img2_path=processed_face_frame,
-            model_name='ArcFace',
-            detector_backend='mediapipe',
-            normalization='ArcFace',
-            align=False,
-            enforce_detection=False)['verified']
+        # output['Identity'] = DeepFace.verify(
+        #     img1_path=processed_target, 
+        #     img2_path=processed_face_frame,
+        #     model_name='ArcFace',
+        #     detector_backend='mediapipe',
+        #     normalization='ArcFace',
+        #     align=False,
+        #     enforce_detection=False)['verified']
+        # output['Identity'] = verify_id(face_frame, target_frame)
 
-        # Face landmarks - for static images
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=face_frame)
-        landmark_result = self.landmarker.detect(mp_image)
+
+        # # Face landmarks - for static images
+        # mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=face_frame)
+        # landmark_result = self.landmarker.detect(mp_image)
         
-        if landmark_result and landmark_result.face_landmarks:
-            face_details = FaceDetails(landmark_result, face_frame)
-            output['Face Direction'] = face_details.gaze_direction
-            output['Face Zone'] = face_details.gaze_zone
-            output['Eye Direction'] = face_details.iris_pos
-            output['Mouth'] = face_details.mouth_zone
-            output['Number of people'] = face_details.num_faces
+        # if landmark_result and landmark_result.face_landmarks:
+        #     face_details = FaceDetails(landmark_result, face_frame)
+        #     output['Face Direction'] = face_details.gaze_direction
+        #     output['Face Zone'] = face_details.gaze_zone
+        #     output['Eye Direction'] = face_details.iris_pos
+        #     output['Mouth'] = face_details.mouth_zone
+        #     output['Number of people'] = face_details.num_faces
+
+        face_details = get_face_inference(face_frame, target_frame, self.landmarker)
+
+        output = output | face_details ## combines both dicts
 
         # Calculate cheat score
         output['Cheat Score'] = calculate_cheat_score(output)
