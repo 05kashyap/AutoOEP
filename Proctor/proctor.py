@@ -160,7 +160,8 @@ def test():
     # Load target and input frames
     target_frame = cv2.imread('Images/identity.jpeg')
     face_frame = cv2.imread('Images/facecam1.png')
-    hand_frame = cv2.imread('Images/handcam3.png')
+    # hand_frame = cv2.imread('Images/handcam3.png')'
+    hand_frame = cv2.imread('Images/test.jpg')
     
     # Process frames
     proctor = StaticProctor(model, media_pipe_dict)
