@@ -35,7 +35,7 @@ class FaceDetails():
             if self.face_landmarks is not None:
                 self.iris_pos, self.iris_ratio = self.getIris()
                 self.mouth_area, self.mouth_zone = self.getMouth()
-                self.x, self.y, self.z, self.radial_distance, self.gaze_direction, self.gaze_zone = self.calculate_zone()
+                self.x_rotation, self.y_rotation, self.z_rotation, self.radial_distance, self.gaze_direction, self.gaze_zone = self.calculate_zone()
 
         elif self.num_faces > 1:
             print("Multiple faces detected")
@@ -52,9 +52,9 @@ class FaceDetails():
         total_distance = self.euclidean_distance(right_point, left_point)
         ratio = center_to_right_dist / total_distance
         iris_position = ""
-        if ratio <=0.42:
+        if ratio <=0.43:
             iris_position = "right"
-        elif 0.42<ratio<=0.57:
+        elif 0.43<ratio<=0.55:
             iris_position = 'center'
         else:
             iris_position = 'left'
@@ -195,7 +195,7 @@ class FaceDetails():
             z = self.face_landmarks[idx].z
 
             face_2d.append([x, y])
-            face_3d.append([x, y, z * 3000] if idx == 1 else [x, y, z])
+            face_3d.append([x, y, z])
 
             # Capture nose coordinates specifically
             if idx == 1:
@@ -226,12 +226,17 @@ class FaceDetails():
 
         # get Euler angles using RQ Decomposition of the rotation matrix
         angles, mtxR, mtxQ, Qx, Qy, Qz = cv2.RQDecomp3x3(rmat)
+        
 
 
         # get the y rotation angle in degrees
         x = angles[0] * 360
         y = angles[1] * 360
         z = angles[2] * 360
+
+        # import sys
+        # sys.stdout.write(f"\r{int(x)} \t {int(y)}")
+        # sys.stdout.flush()
 
         # checking where the user's head is tilting
         if y < -10:
