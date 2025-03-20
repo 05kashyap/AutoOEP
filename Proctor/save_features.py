@@ -34,10 +34,21 @@ def suppress_output():
             sys.stderr = old_stderr
 
 def extract_timestamp(filename):
-    """Extract timestamp from filename format frame_number_x-xx-xx.xxxxxx.jpg"""
+    """
+    Extract timestamp from filenames in formats:
+    - frame_number_x-xx-xx.xxxxxx.jpg
+    - frame_number_x-xx-xx-xxxxxx.jpg
+    """
+    # Try the format with period separator
     match = re.search(r'_(\d+-\d+-\d+\.\d+)\.jpg$', filename)
     if match:
         return match.group(1)
+    
+    # Try the format with hyphen separator
+    match = re.search(r'_(\d+-\d+-\d+-\d+)\.jpg$', filename)
+    if match:
+        return match.group(1)
+        
     return None
 
 def find_frame_paths(dataset_path, timestamp):
@@ -114,7 +125,7 @@ def process_dataset(dataset_path, target_frame_path, output_csv_path):
     
     # Initialize results list
     results = []
-    
+    print(f"Processing dataset at {dataset_path}")
     # Get all unique timestamps
     all_timestamps = get_all_timestamps(dataset_path)
     main_progress = tqdm(total=len(all_timestamps), desc="Processing dataset", unit="pair")
@@ -184,9 +195,9 @@ def process_dataset(dataset_path, target_frame_path, output_csv_path):
 
 if __name__ == "__main__":
     # Configuration
-    dataset_path = "/home/kashyap/Documents/Projects/PROCTOR/Bhuv_Dataset/"
-    target_frame_path = "/home/kashyap/Documents/Projects/PROCTOR/Bhuv_Dataset/face_frames/ID.png"
-    output_csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proctor_results.csv")
+    dataset_path = "/home/kashyap/Documents/Projects/PROCTOR/Rjn_Dataset/"
+    target_frame_path = "/home/kashyap/Documents/Projects/PROCTOR/Rjn_Dataset/face_frames/ID.png"
+    output_csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "2proctor_results.csv")
     
     # Process the dataset
     results_df = process_dataset(dataset_path, target_frame_path, output_csv_path)
