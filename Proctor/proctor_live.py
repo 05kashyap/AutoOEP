@@ -122,7 +122,7 @@ class LiveProctor:
 
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = YOLO('/home/kashyap/Documents/Projects/PROCTOR/CheatusDeletus/Proctor/OEP_YOLOv11n.pt')
+    model = YOLO('OEP_YOLOv11n.pt')
 
     mpHands = mp.solutions.hands
     media_pipe_dict = {
@@ -134,6 +134,6 @@ if __name__ == '__main__':
         'mpdraw': mp.solutions.drawing_utils
     }
 
-    target_path = '/home/kashyap/Documents/Projects/PROCTOR/anti-cheat-system/anti-cheat-system/Proctor/images/willsmith_ID.jpg'
+    target_path = 'Images/identity_k.jpeg'
     proctor = LiveProctor(target_path, model, media_pipe_dict)
     proctor.start_stream()
