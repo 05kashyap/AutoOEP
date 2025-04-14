@@ -28,6 +28,12 @@ class CustomScaler:
         
     def fit_transform(self, X):
         return self.fit(X).transform(X)
+        
+    def initialize(self, mean, scale):
+        """Initialize the scaler with provided mean and scale values"""
+        self.mean_ = np.array(mean)
+        self.scale_ = np.array(scale)
+        return self
 
 def custom_train_test_split(X, y, test_size=0.2, random_state=None):
     """Custom implementation of train_test_split"""
