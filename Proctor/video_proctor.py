@@ -12,20 +12,15 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import threading
 import queue
+import joblib  # Add for loading XGBoost model
+from sklearn.preprocessing import StandardScaler 
+
 
 class VideoProctor:
-    def __init__(self, lstm_model_path, yolo_model_path, window_size=15, input_size=None,
-                 buffer_size=30, device=None):
+    def __init__(self, lstm_model_path, yolo_model_path, xgboost_model_path=None, window_size=15, input_size=None,
+                buffer_size=30, device=None):
         """
         Initialize the video proctor that combines frame-by-frame analysis with temporal analysis
-        
-        Args:
-            lstm_model_path: Path to the trained LSTM model
-            yolo_model_path: Path to the YOLO model for object detection
-            window_size: Size of window used by the temporal model
-            input_size: Number of features in the input data
-            buffer_size: Size of the feature buffer for temporal analysis
-            device: Computing device ('cuda' or 'cpu')
         """
         self.device = device if device else ('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Using device: {self.device}")
@@ -58,6 +53,27 @@ class VideoProctor:
         # Initialize scaler with mean and std values from training
         self.initialize_scaler()
         
+        # Load XGBoost model and its scaler if provided
+        self.xgboost_model = None
+        self.xgboost_scaler = None
+        if xgboost_model_path:
+            try:
+                # Load the XGBoost model
+                self.xgboost_model = joblib.load(xgboost_model_path)
+                print(f"XGBoost model loaded successfully from {xgboost_model_path}")
+                
+                # Load the scaler that was used during XGBoost training
+                try:
+                    self.xgboost_scaler = joblib.load('scaler.joblib')
+                    print("XGBoost scaler loaded successfully")
+                except Exception as e:
+                    print(f"Error loading XGBoost scaler: {e}")
+                    # Create a fallback scaler if loading fails
+                    self.xgboost_scaler = StandardScaler()
+                    self.initialize_xgboost_scaler()
+            except Exception as e:
+                print(f"Error loading XGBoost model: {e}")
+        
         # Feature buffer for temporal analysis
         self.feature_buffer = deque(maxlen=buffer_size)
         
@@ -65,6 +81,7 @@ class VideoProctor:
         self.timestamps = deque(maxlen=100)
         self.predictions = deque(maxlen=100)
         self.static_scores = deque(maxlen=100)
+        self.xgboost_scores = deque(maxlen=100)  # For XGBoost predictions
         
         # For visualization
         self.plot_initialized = False
@@ -72,6 +89,7 @@ class VideoProctor:
         self.ax = None
         self.line1 = None
         self.line2 = None
+        self.line3 = None
         
     def initialize_scaler(self):
         """Initialize the scaler with pre-calculated mean and std values from training data"""
@@ -133,7 +151,7 @@ class VideoProctor:
         self.temporal_proctor.scaler.mean_ = means
         self.temporal_proctor.scaler.scale_ = stds
         print("Scaler initialized with pre-calculated mean and std values")
-        
+
     def process_frame_pair(self, target_frame, face_frame, hand_frame):
         """
         Process a pair of frames (face and hand) to extract features and make predictions
@@ -160,16 +178,34 @@ class VideoProctor:
         if len(self.feature_buffer) >= self.temporal_proctor.window_size:
             temporal_prediction = self.temporal_proctor.make_realtime_prediction(list(self.feature_buffer))
         
+        # Make XGBoost prediction on current frame if model is available
+        xgboost_prediction = None
+        if self.xgboost_model is not None:
+            # Convert features to the format expected by XGBoost (exclude timestamp)
+            xgb_features = np.array(features[1:]).reshape(1, -1)  # Skip timestamp (first feature)
+            
+            try:
+                # Scale features using StandardScaler
+                xgb_features_scaled = self.xgboost_scaler.transform(xgb_features)
+                
+                # Get prediction probability
+                xgboost_prediction = self.xgboost_model.predict_proba(xgb_features_scaled)[0][1]
+            except Exception as e:
+                print(f"Error in XGBoost prediction: {e}")
+                xgboost_prediction = 0.0
+        
         # Add predictions to history for visualization
         current_time = time.time()
         self.timestamps.append(current_time)
         self.predictions.append(temporal_prediction if temporal_prediction is not None else 0)
         self.static_scores.append(static_results.get('Cheat Score', 0))
+        self.xgboost_scores.append(xgboost_prediction if xgboost_prediction is not None else 0)
         
         # Combine results
         results = {
             'static_results': static_results,
             'temporal_prediction': temporal_prediction,
+            'xgboost_prediction': xgboost_prediction,
             'timestamp': current_time
         }
         
@@ -491,6 +527,9 @@ class VideoProctor:
         # Add temporal prediction
         temporal_pred = result.get('temporal_prediction')
         
+        # Add XGBoost prediction
+        xgboost_pred = result.get('xgboost_prediction')
+        
         # Draw static cheat score
         static_score = static_results.get('Cheat Score', 0)
         cv2.putText(combined_frame, f"Static Score: {static_score:.2f}", 
@@ -502,11 +541,19 @@ class VideoProctor:
             color = (0, 0, 255) if temporal_pred > 0.5 else (0, 255, 0)
             cv2.putText(combined_frame, f"Temporal Prediction: {temporal_pred:.2f}", 
                         (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        
+        # Draw XGBoost prediction
+        if xgboost_pred is not None:
+            # Color based on prediction (red for likely cheating)
+            color = (0, 0, 255) if xgboost_pred > 0.5 else (0, 255, 0)
+            cv2.putText(combined_frame, f"XGBoost Prediction: {xgboost_pred:.2f}", 
+                        (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
             
-            # Add warning text for high probability
-            if temporal_pred > 0.7:
+            # Add warning text for high probability of either model
+            warning_threshold = 0.7
+            if temporal_pred is not None and temporal_pred > warning_threshold or xgboost_pred > warning_threshold:
                 cv2.putText(combined_frame, "WARNING: Likely Cheating Detected", 
-                            (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                            (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
         
         return combined_frame
     
@@ -516,6 +563,7 @@ class VideoProctor:
         self.fig, self.ax = plt.subplots(figsize=(10, 4))
         self.line1, = self.ax.plot([], [], 'r-', label='Temporal Prediction')
         self.line2, = self.ax.plot([], [], 'b-', label='Static Score')
+        self.line3, = self.ax.plot([], [], 'g-', label='XGBoost Prediction')  # New line for XGBoost
         
         self.ax.set_ylim(0, 1)
         self.ax.set_xlabel('Time')
@@ -538,6 +586,7 @@ class VideoProctor:
             
             self.line1.set_data(rel_times, self.predictions)
             self.line2.set_data(rel_times, self.static_scores)
+            self.line3.set_data(rel_times, self.xgboost_scores)  # Add XGBoost data
             
             self.ax.set_xlim(0, rel_times[-1] + 0.5)
             self.fig.canvas.draw_idle()
@@ -558,6 +607,7 @@ def parse_arguments():
     parser.add_argument('--target', type=str, required=True, help='Path to target/reference face image')
     parser.add_argument('--output', type=str, default=None, help='Path to save output video')
     parser.add_argument('--lstm-model', type=str, required=True, help='Path to trained LSTM model')
+    parser.add_argument('--xgboost-model', type=str, default=None, help='Path to trained XGBoost model')
     parser.add_argument('--yolo-model', type=str, default='OEP_YOLOv11n.pt', help='Path to YOLO model')
     parser.add_argument('--input-size', type=int, default=23, help='Number of features for LSTM input')
     parser.add_argument('--window-size', type=int, default=15, help='Window size for temporal analysis')
@@ -574,6 +624,7 @@ if __name__ == "__main__":
     proctor = VideoProctor(
         lstm_model_path=args.lstm_model,
         yolo_model_path=args.yolo_model,
+        xgboost_model_path=args.xgboost_model,
         window_size=args.window_size,
         input_size=args.input_size,
         buffer_size=args.buffer_size
@@ -593,6 +644,8 @@ if __name__ == "__main__":
     
     # Calculate overall statistics
     temporal_predictions = [r['temporal_prediction'] for r in results if r['temporal_prediction'] is not None]
+    xgboost_predictions = [r['xgboost_prediction'] for r in results if r['xgboost_prediction'] is not None]
+    
     if temporal_predictions:
         avg_prediction = sum(temporal_predictions) / len(temporal_predictions)
         max_prediction = max(temporal_predictions)
@@ -601,3 +654,12 @@ if __name__ == "__main__":
         print(f"Maximum temporal cheating probability: {max_prediction:.4f}")
         print(f"Percentage of frames above threshold (0.5): "
               f"{sum(p > 0.5 for p in temporal_predictions) / len(temporal_predictions) * 100:.2f}%")
+    
+    if xgboost_predictions:
+        avg_xgb_prediction = sum(xgboost_predictions) / len(xgboost_predictions)
+        max_xgb_prediction = max(xgboost_predictions)
+        
+        print(f"Average XGBoost cheating probability: {avg_xgb_prediction:.4f}")
+        print(f"Maximum XGBoost cheating probability: {max_xgb_prediction:.4f}")
+        print(f"Percentage of frames above threshold (0.5): "
+              f"{sum(p > 0.5 for p in xgboost_predictions) / len(xgboost_predictions) * 100:.2f}%")
