@@ -19,7 +19,7 @@ FaceDetectorResult = mp.tasks.vision.FaceDetectorResult
 VisionRunningMode = mp.tasks.vision.RunningMode
 
 # Path to the face landmark model
-model_path = 'face_landmarker.task'
+# model_path = 'face_landmarker.task'
 
 def enhance_frame(image):
     alpha = 1.3
@@ -66,7 +66,7 @@ def preprocess_for_object_detection(image):
 
 
 class StaticProctor:
-    def __init__(self, yolo_model, media_pipe):
+    def __init__(self, yolo_model, media_pipe, model_path):
         self.yolo_model = yolo_model
         self.media_pipe = media_pipe
         
