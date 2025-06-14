@@ -17,7 +17,7 @@ from sklearn.preprocessing import StandardScaler
 
 
 class VideoProctor:
-    def __init__(self, lstm_model_path, yolo_model_path, xgboost_model_path=None, window_size=15, input_size=None,
+    def __init__(self, lstm_model_path, yolo_model_path, xgboost_model_path=None,mediapipe_model_path=None, window_size=15, input_size=None,
                 buffer_size=30, device=None):
         """
         Initialize the video proctor that combines frame-by-frame analysis with temporal analysis
@@ -40,7 +40,7 @@ class VideoProctor:
         }
         
         # Initialize static proctor
-        self.static_proctor = StaticProctor(self.yolo_model, self.media_pipe_dict)
+        self.static_proctor = StaticProctor(self.yolo_model, self.media_pipe_dict, model_path = mediapipe_model_path)
         
         # Initialize temporal proctor
         self.temporal_proctor = TemporalProctor(window_size=window_size, device=self.device)
@@ -609,6 +609,7 @@ def parse_arguments():
     parser.add_argument('--lstm-model', type=str, required=True, help='Path to trained LSTM model')
     parser.add_argument('--xgboost-model', type=str, default=None, help='Path to trained XGBoost model')
     parser.add_argument('--yolo-model', type=str, default='OEP_YOLOv11n.pt', help='Path to YOLO model')
+    parser.add_argument('--mediapipe-task', type=str, required=True, help='Path to mediapipe face_landmarker.task')
     parser.add_argument('--input-size', type=int, default=23, help='Number of features for LSTM input')
     parser.add_argument('--window-size', type=int, default=15, help='Window size for temporal analysis')
     parser.add_argument('--buffer-size', type=int, default=30, help='Size of feature buffer')
@@ -625,6 +626,7 @@ if __name__ == "__main__":
         lstm_model_path=args.lstm_model,
         yolo_model_path=args.yolo_model,
         xgboost_model_path=args.xgboost_model,
+        mediapipe_model_path=args.mediapipe_task,
         window_size=args.window_size,
         input_size=args.input_size,
         buffer_size=args.buffer_size
