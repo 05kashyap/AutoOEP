@@ -17,7 +17,7 @@ from sklearn.preprocessing import StandardScaler
 
 
 class VideoProctor:
-    def __init__(self, lstm_model_path, yolo_model_path, xgboost_model_path=None,mediapipe_model_path=None, window_size=15, input_size=None,
+    def __init__(self, lstm_model_path, yolo_model_path, xgboost_model_path=None,xgboost_scaler_path = None,mediapipe_model_path=None, window_size=15, input_size=None,
                 buffer_size=30, device=None):
         """
         Initialize the video proctor that combines frame-by-frame analysis with temporal analysis
@@ -64,7 +64,7 @@ class VideoProctor:
                 
                 # Load the scaler that was used during XGBoost training
                 try:
-                    self.xgboost_scaler = joblib.load('scaler.joblib')
+                    self.xgboost_scaler = joblib.load(xgboost_scaler_path)
                     print("XGBoost scaler loaded successfully")
                 except Exception as e:
                     print(f"Error loading XGBoost scaler: {e}")
@@ -608,6 +608,7 @@ def parse_arguments():
     parser.add_argument('--output', type=str, default=None, help='Path to save output video')
     parser.add_argument('--lstm-model', type=str, required=True, help='Path to trained LSTM model')
     parser.add_argument('--xgboost-model', type=str, default=None, help='Path to trained XGBoost model')
+    parser.add_argument('--xgboost-scaler', type=str, default=None, help='Path to XGBoost scaler')
     parser.add_argument('--yolo-model', type=str, default='OEP_YOLOv11n.pt', help='Path to YOLO model')
     parser.add_argument('--mediapipe-task', type=str, required=True, help='Path to mediapipe face_landmarker.task')
     parser.add_argument('--input-size', type=int, default=23, help='Number of features for LSTM input')
@@ -626,6 +627,7 @@ if __name__ == "__main__":
         lstm_model_path=args.lstm_model,
         yolo_model_path=args.yolo_model,
         xgboost_model_path=args.xgboost_model,
+        xgboost_scaler_path=args.xgboost_scaler,
         mediapipe_model_path=args.mediapipe_task,
         window_size=args.window_size,
         input_size=args.input_size,
