@@ -7,7 +7,7 @@ import argparse
 from collections import deque
 from ultralytics import YOLO
 from proctor import StaticProctor
-from temporal_proctor import TemporalProctor
+from Proctor.Temporal.temporal_proctor import TemporalProctor
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import threading

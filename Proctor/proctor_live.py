@@ -3,10 +3,9 @@ import cv2
 from deepface import DeepFace
 import numpy as np
 # from facial_landmarking_utils import face_pose
-from handpose import inference
+from Proctor.VisionUtils.handpose import inference
 import mediapipe as mp
-from cheat_prob import calculate_cheat_score
-from FaceDetailsCalculator import FaceDetails
+from Proctor.VisionUtils.FaceDetailsCalculator import FaceDetails
 import torch 
 from ultralytics import YOLO
 
@@ -94,7 +93,7 @@ class LiveProctor:
         self.frame_count += 1
 
         # Calculate cheat score
-        self.output['Cheat Score'] = calculate_cheat_score(self.output)
+        self.output['Cheat Score'] = 1
         return self.output
 
     def start_stream(self):

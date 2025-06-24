@@ -2,12 +2,11 @@ import cv2
 from deepface import DeepFace
 import numpy as np
 import mediapipe as mp
-from cheat_prob import calculate_cheat_score
-from FaceDetailsCalculator import FaceDetails
+from Proctor.VisionUtils.FaceDetailsCalculator import FaceDetails
 import torch
-from handpose import inference
+from Proctor.VisionUtils.handpose import inference
 from ultralytics import YOLO
-from face_inference import get_face_inference
+from Proctor.VisionUtils.face_inference import get_face_inference
 
 BaseOptions = mp.tasks.BaseOptions
 FaceLandmarker = mp.tasks.vision.FaceLandmarker
@@ -143,7 +142,7 @@ class StaticProctor:
         output = output | face_details ## combines both dicts
 
         # Calculate cheat score
-        output['Cheat Score'] = calculate_cheat_score(output)
+        output['Cheat Score'] = 1#calculate_cheat_score(output)
         return output
 
     def __del__(self):
