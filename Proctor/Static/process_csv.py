@@ -102,8 +102,8 @@ nan_mappings = {
     'mouth_zone': -1,
     'gaze_direction': -1,
     'gaze_zone': -1,
-    "H-Distance": 1000,
-    "F-Distance": 1000,
+    "H-Distance": 10000,
+    "F-Distance": 10000,
 }
 
 # %%

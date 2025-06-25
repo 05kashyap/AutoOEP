@@ -243,16 +243,20 @@ class TemporalProctor:
         """Load and preprocess the dataset"""
         # Load the dataset
         df = pd.read_csv(csv_path)
-        
+
         # Sort by timestamp (just to be sure)
         df = df.sort_values('timestamp')
-        
+
         # Calculate time differences for potential weighting
         df['time_diff'] = df['timestamp'].diff()
-        df['time_diff'].fillna(0, inplace=True)
-        
+
+        # Fix: Use direct assignment instead of chained inplace operation
+        df['time_diff'] = df['time_diff'].fillna(0)
+        # Alternative fix: Use fillna with inplace on the entire DataFrame
+        # df.fillna({'time_diff': 0}, inplace=True)
+
         return df
-        
+    
     def create_sequences(self, df):
         """Create sequences for temporal modeling"""
         # Features we'll use (exclude timestamp and target variable)
@@ -553,24 +557,33 @@ class TemporalProctor:
         
         plt.tight_layout()
         plt.show()
-        
-    def save_model(self, path='temporal_proctor_model.pt'):
-        """Save the model"""
+            
+    def save_model(self, path='Proctor/Models/temporal_proctor_model.pt'):
+        """Save the model and scaler"""
         if self.model is not None:
             torch.save({
                 'model_state_dict': self.model.state_dict(),
                 'window_size': self.window_size,
-                'model_type': self.model_type
+                'model_type': self.model_type,
+                'scaler_mean': self.scaler.mean_,
+                'scaler_scale': self.scaler.scale_
             }, path)
-            print(f"Model saved to {path}")
+            print(f"Model and scaler saved to {path}")
         else:
             print("No model to save. Train a model first.")
-            
-    def load_model(self, path='temporal_proctor_model.pt', input_size=None):
-        """Load a saved model"""
+
+    def load_model(self, path='Proctor/Models/temporal_proctor_model.pt', input_size=None):
+        """Load a saved model and scaler"""
         checkpoint = torch.load(path, map_location=self.device)
         self.window_size = checkpoint.get('window_size', self.window_size)
         self.model_type = checkpoint.get('model_type', self.model_type)
+        
+        # Load scaler parameters
+        if 'scaler_mean' in checkpoint and 'scaler_scale' in checkpoint:
+            self.scaler.initialize(checkpoint['scaler_mean'], checkpoint['scaler_scale'])
+            print("Scaler parameters loaded successfully")
+        else:
+            print("Warning: No scaler parameters found in saved model")
         
         if input_size is None:
             raise ValueError("Please provide input_size when loading a model")
@@ -586,7 +599,7 @@ if __name__ == "__main__":
     proctor = TemporalProctor(window_size=15, model_type='lstm')
     
     # Load and preprocess the data
-    df = proctor.load_data('proctor_results_final_cleaned.csv')
+    df = proctor.load_data('Proctor/Datasets/training_proctor_results.csv')
     
     # Create sequences
     X, y = proctor.create_sequences(df)
