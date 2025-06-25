@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 
 # %%
-df = pd.read_csv("2proctor_results.csv")
+df = pd.read_csv("Proctor/Datasets/raw_proctor_results.csv")
 
 # %%
 df
@@ -147,7 +147,7 @@ columns = [
 df3 = df2[columns]
 
 # %%
-df3.to_csv("proctor_results_final_cleaned.csv", index=False)
+# df3.to_csv("Proctor/Datasets/proctor_results_final_cleaned.csv", index=False)
 
 # %%
 df3["is_cheating"].value_counts()
@@ -159,7 +159,7 @@ df3 = df3.sort_values(by='timestamp')
 df3.head()
 
 # %%
-df3.to_csv("proctor_results_final_cleaned.csv", index=False)
+df3.to_csv("Proctor/Datasets/training_proctor_results.csv", index=False)
 
 # %%
 
