@@ -2,11 +2,11 @@ import cv2
 from deepface import DeepFace
 import numpy as np
 import mediapipe as mp
-from Proctor.VisionUtils.FaceDetailsCalculator import FaceDetails
+from VisionUtils.FaceDetailsCalculator import FaceDetails
 import torch
-from Proctor.VisionUtils.handpose import inference
+from VisionUtils.handpose import inference
 from ultralytics import YOLO
-from Proctor.VisionUtils.face_inference import get_face_inference
+from VisionUtils.face_inference import get_face_inference
 
 BaseOptions = mp.tasks.BaseOptions
 FaceLandmarker = mp.tasks.vision.FaceLandmarker

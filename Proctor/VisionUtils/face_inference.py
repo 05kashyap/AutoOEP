@@ -3,7 +3,7 @@ import mediapipe as mp
 import numpy as np
 import pandas as pd
 import os
-from Proctor.VisionUtils.FaceDetailsCalculator import FaceDetails
+from VisionUtils.FaceDetailsCalculator import FaceDetails
 from deepface import DeepFace
 
 face_attributes = [

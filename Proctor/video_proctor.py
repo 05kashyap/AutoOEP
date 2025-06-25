@@ -7,7 +7,7 @@ import argparse
 from collections import deque
 from ultralytics import YOLO
 from proctor import StaticProctor
-from Proctor.Temporal.temporal_proctor import TemporalProctor
+from Temporal.temporal_proctor import TemporalProctor
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import threading
@@ -17,13 +17,21 @@ from sklearn.preprocessing import StandardScaler
 
 
 class VideoProctor:
-    def __init__(self, lstm_model_path, yolo_model_path, xgboost_model_path=None,xgboost_scaler_path = None,mediapipe_model_path=None, window_size=15, input_size=None,
-                buffer_size=30, device=None):
+    def __init__(self, lstm_model_path, yolo_model_path, xgboost_model_path=None, xgboost_scaler_path=None, mediapipe_model_path=None, window_size=15, 
+                input_size=None, buffer_size=30, device=None, debug_features=False):
         """
         Initialize the video proctor that combines frame-by-frame analysis with temporal analysis
         """
         self.device = device if device else ('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Using device: {self.device}")
+        self.debug_features = debug_features
+        self.log_features = debug_features  # Enable feature logging
+
+        if debug_features:
+            print("🐛 DEBUG MODE: Feature verification enabled")
+            # Don't call verify_feature_consistency here - we don't have features yet
+            # Instead, just verify that the training CSV exists and show expected features
+            self.show_expected_features()
         
         # Load YOLO model
         self.yolo_model = YOLO(yolo_model_path)
@@ -56,6 +64,7 @@ class VideoProctor:
         # Load XGBoost model and its scaler if provided
         self.xgboost_model = None
         self.xgboost_scaler = None
+        print(f"Loading XGBoost model from {xgboost_model_path} and scaler from {xgboost_scaler_path}")
         if xgboost_model_path:
             try:
                 # Load the XGBoost model
@@ -360,7 +369,139 @@ class VideoProctor:
         f_distance = results.get('F-Distance')
         features.append(float(f_distance) if f_distance is not None else 1000)
         
+        if hasattr(self, 'log_features') and self.log_features:
+            feature_names = [
+                'timestamp', 'verification_result', 'num_faces', 'iris_pos', 
+                'iris_ratio', 'mouth_zone', 'mouth_area', 'x_rotation', 
+                'y_rotation', 'z_rotation', 'radial_distance', 'gaze_direction', 
+                'gaze_zone', 'watch', 'headphone', 'closedbook', 'earpiece', 
+                'cell phone', 'openbook', 'chits', 'sheet', 'H-Distance', 'F-Distance'
+            ]
+            
+            print("\n=== FEATURE VERIFICATION ===")
+            print(f"Expected features: {len(feature_names)}")
+            print(f"Extracted features: {len(features)}")
+            
+            for i, (name, value) in enumerate(zip(feature_names, features)):
+                print(f"{i:2d}. {name:15s}: {value}")
+            
+            # Verify against expected ranges
+            self.verify_feature_ranges(features, feature_names)
+            
+            # Now call feature consistency check with actual features
+            self.verify_feature_consistency(features)
+        
         return features
+        
+    def verify_feature_ranges(self, features, feature_names):
+        """Verify that features are within expected ranges"""
+        expected_ranges = {
+            'verification_result': (0, 1),
+            'num_faces': (0, 10),
+            'iris_pos': (-1, 2),
+            'mouth_zone': (-1, 3),
+            'gaze_direction': (-1, 4),
+            'gaze_zone': (-1, 2),
+            'H-Distance': (0, 10000),
+            'F-Distance': (0, 10000)
+        }
+        
+        warnings = []
+        for i, (name, value) in enumerate(zip(feature_names, features)):
+            if name in expected_ranges:
+                min_val, max_val = expected_ranges[name]
+                if not (min_val <= value <= max_val):
+                    warnings.append(f"WARNING: {name} = {value} outside range [{min_val}, {max_val}]")
+        
+        if warnings:
+            print("\n⚠️  FEATURE RANGE WARNINGS:")
+            for warning in warnings:
+                print(f"   {warning}")
+        else:
+            print("✅ All features within expected ranges")
+
+    def show_expected_features(self, reference_csv_path=None):
+        """
+        Show expected features from training data during initialization
+        """
+        if reference_csv_path is None:
+            reference_csv_path = 'Proctor/Datasets/training_proctor_results.csv'
+        
+        try:
+            import pandas as pd
+            # Load reference data
+            ref_df = pd.read_csv(reference_csv_path)
+            ref_features = ref_df.drop(['timestamp', 'is_cheating'], axis=1, errors='ignore')
+            
+            expected_feature_names = ref_features.columns.tolist()
+            
+            print("\n=== EXPECTED FEATURES FROM TRAINING DATA ===")
+            print(f"Total expected features: {len(expected_feature_names)}")
+            for i, feat in enumerate(expected_feature_names):
+                print(f"  {i:2d}. {feat}")
+            
+            print(f"\nTraining data shape: {ref_df.shape}")
+            print(f"Features will be extracted in this order during processing.")
+            
+        except Exception as e:
+            print(f"Warning: Could not load training data for feature verification: {e}")
+
+    def verify_feature_consistency(self, current_features=None, reference_csv_path=None):
+        """
+        Verify that current features match the format of training data
+        """
+        if reference_csv_path is None:
+            reference_csv_path = 'Proctor/Datasets/training_proctor_results.csv'
+        
+        try:
+            import pandas as pd
+            # Load reference data
+            ref_df = pd.read_csv(reference_csv_path)
+            ref_features = ref_df.drop(['timestamp', 'is_cheating'], axis=1, errors='ignore')
+            
+            expected_feature_names = ref_features.columns.tolist()
+            
+            current_feature_names = [
+                'verification_result', 'num_faces', 'iris_pos', 'iris_ratio', 
+                'mouth_zone', 'mouth_area', 'x_rotation', 'y_rotation', 'z_rotation',
+                'radial_distance', 'gaze_direction', 'gaze_zone', 'watch', 'headphone',
+                'closedbook', 'earpiece', 'cell phone', 'openbook', 'chits', 'sheet',
+                'H-Distance', 'F-Distance'
+            ]
+            
+            print("\n=== FEATURE CONSISTENCY CHECK ===")
+            print(f"Expected features (from training): {len(expected_feature_names)}")
+            print(f"Current feature names: {len(current_feature_names)}")
+            
+            if current_features is not None:
+                print(f"Current feature values: {len(current_features) - 1}")  # -1 for timestamp
+            
+            # Check for missing features
+            missing = set(expected_feature_names) - set(current_feature_names)
+            extra = set(current_feature_names) - set(expected_feature_names)
+            
+            if missing:
+                print(f"❌ Missing features: {missing}")
+            if extra:
+                print(f"⚠️  Extra features: {extra}")
+            if not missing and not extra:
+                print("✅ Feature names match perfectly")
+            
+            # Check feature order
+            if current_feature_names == expected_feature_names:
+                print("✅ Feature order matches")
+            else:
+                print("⚠️  Feature order differs:")
+                for i, (curr, exp) in enumerate(zip(current_feature_names, expected_feature_names)):
+                    if curr != exp:
+                        print(f"   Position {i}: got '{curr}', expected '{exp}'")
+            
+            return missing, extra
+            
+        except Exception as e:
+            print(f"Error in feature consistency check: {e}")
+            return None, None
+
     
     def process_videos(self, face_video_path, hand_video_path, target_frame_path, 
                   output_path=None, display=True, fps=30, test_duration=None):
@@ -631,7 +772,8 @@ if __name__ == "__main__":
         mediapipe_model_path=args.mediapipe_task,
         window_size=args.window_size,
         input_size=args.input_size,
-        buffer_size=args.buffer_size
+        buffer_size=args.buffer_size,
+        debug_features=True,  # Enable debug features for verification
     )
     
     # Process videos
