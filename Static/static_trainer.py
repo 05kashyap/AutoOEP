@@ -487,7 +487,7 @@ def main(csv_file_path, use_scaling=True):
 
 # Example usage
 if __name__ == "__main__":
-    csv_file_path = 'Proctor/Datasets/training_proctor_results.csv'
+    csv_file_path = 'Datasets/training_proctor_results.csv'
     
     print("XGBoost Cheating Detection Classifier")
     print("="*50)

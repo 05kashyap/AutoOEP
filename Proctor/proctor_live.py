@@ -3,9 +3,9 @@ import cv2
 from deepface import DeepFace
 import numpy as np
 # from facial_landmarking_utils import face_pose
-from Proctor.VisionUtils.handpose import inference
+from VisionUtils.handpose import inference
 import mediapipe as mp
-from Proctor.VisionUtils.FaceDetailsCalculator import FaceDetails
+from VisionUtils.FaceDetailsCalculator import FaceDetails
 import torch 
 from ultralytics import YOLO
 
@@ -121,7 +121,7 @@ class LiveProctor:
 
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = YOLO('OEP_YOLOv11n.pt')
+    model = YOLO('Models/OEP_YOLOv11n.pt')
 
     mpHands = mp.solutions.hands
     media_pipe_dict = {

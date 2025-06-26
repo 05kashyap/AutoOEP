@@ -154,7 +154,7 @@ class StaticProctor:
 def test():
     # Example of how to use the StaticProctor
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = YOLO('OEP_YOLOv11n.pt')
+    model = YOLO('Models/OEP_YOLOv11n.pt')
 
     
     mpHands = mp.solutions.hands

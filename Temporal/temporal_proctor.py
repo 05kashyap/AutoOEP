@@ -515,7 +515,7 @@ if __name__ == "__main__":
     proctor = TemporalProctor(window_size=15, model_type='lstm')
     
     # Load and preprocess the data
-    df = proctor.load_data('Proctor/Datasets/training_proctor_results.csv')
+    df = proctor.load_data('Datasets/training_proctor_results.csv')
     
     # Create sequences
     X, y = proctor.create_sequences(df)

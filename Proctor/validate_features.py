@@ -15,7 +15,7 @@ def validate_feature_pipeline():
     print("="*60)
     
     # 1. Load training data and check expected features
-    training_csv = 'Proctor/Datasets/training_proctor_results.csv'
+    training_csv = 'Datasets/training_proctor_results.csv'
     df = pd.read_csv(training_csv)
     
     expected_features = df.drop(['timestamp', 'is_cheating'], axis=1).columns.tolist()
@@ -114,7 +114,7 @@ def compare_with_csv_sample():
     
     try:
         # Load a sample from training data
-        df = pd.read_csv('Proctor/Datasets/training_proctor_results.csv')
+        df = pd.read_csv('Datasets/training_proctor_results.csv')
         sample = df.iloc[0]
         
         print("Sample from training CSV:")
@@ -127,7 +127,7 @@ def compare_with_csv_sample():
         for col in feature_cols:
             print(f"  {col}: [{df[col].min():.2f}, {df[col].max():.2f}]")
     except FileNotFoundError:
-        print("❌ Training CSV file not found: Proctor/Datasets/training_proctor_results.csv")
+        print("❌ Training CSV file not found: Datasets/training_proctor_results.csv")
     except Exception as e:
         print(f"❌ Error reading training data: {e}")
 

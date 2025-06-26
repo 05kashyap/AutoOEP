@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 import re
 from ultralytics import YOLO
-from proctor import StaticProctor
+from Proctor.proctor import StaticProctor
 from tqdm import tqdm
 import logging
 import warnings
@@ -102,7 +102,7 @@ def process_dataset(dataset_path, target_frame_path, output_csv_path):
     # Setup YOLO model and MediaPipe
     with suppress_output():
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        model = YOLO('OEP_YOLOv11n.pt')
+        model = YOLO('Models/OEP_YOLOv11n.pt')
         
         mpHands = mp.solutions.hands
         media_pipe_dict = {

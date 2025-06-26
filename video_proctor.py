@@ -6,7 +6,7 @@ import time
 import argparse
 from collections import deque
 from ultralytics import YOLO
-from proctor import StaticProctor
+from Proctor.proctor import StaticProctor
 from Temporal.temporal_proctor import TemporalProctor
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
@@ -425,7 +425,7 @@ class VideoProctor:
         Show expected features from training data during initialization
         """
         if reference_csv_path is None:
-            reference_csv_path = 'Proctor/Datasets/training_proctor_results.csv'
+            reference_csv_path = 'Datasets/training_proctor_results.csv'
         
         try:
             import pandas as pd
@@ -451,7 +451,7 @@ class VideoProctor:
         Verify that current features match the format of training data
         """
         if reference_csv_path is None:
-            reference_csv_path = 'Proctor/Datasets/training_proctor_results.csv'
+            reference_csv_path = 'Datasets/training_proctor_results.csv'
         
         try:
             import pandas as pd
@@ -750,7 +750,7 @@ def parse_arguments():
     parser.add_argument('--lstm-model', type=str, required=True, help='Path to trained LSTM model')
     parser.add_argument('--xgboost-model', type=str, default=None, help='Path to trained XGBoost model')
     parser.add_argument('--xgboost-scaler', type=str, default=None, help='Path to XGBoost scaler')
-    parser.add_argument('--yolo-model', type=str, default='OEP_YOLOv11n.pt', help='Path to YOLO model')
+    parser.add_argument('--yolo-model', type=str, default='Models/OEP_YOLOv11n.pt', help='Path to YOLO model')
     parser.add_argument('--mediapipe-task', type=str, required=True, help='Path to mediapipe face_landmarker.task')
     parser.add_argument('--input-size', type=int, default=23, help='Number of features for LSTM input')
     parser.add_argument('--window-size', type=int, default=15, help='Window size for temporal analysis')

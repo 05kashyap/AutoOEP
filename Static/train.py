@@ -8,7 +8,7 @@ from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 from joblib import dump
-from proctor import face_module
+from Proctor.proctor import face_module
 import torch
 import random
 import mediapipe as mp
