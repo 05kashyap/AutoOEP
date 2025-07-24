@@ -57,10 +57,12 @@ class VideoProctor:
         if input_size is None:
             raise ValueError("input_size must be provided for loading the LSTM model")
         self.temporal_proctor.load_model(lstm_model_path, input_size)
-        
-        # Initialize scaler with mean and std values from training
-        self.initialize_scaler()
-        
+        if self.temporal_proctor.scaler.mean_ is None:
+            print("Warning: LSTM scaler not loaded from model file, initializing with default values")
+            self.initialize_scaler()
+        else:
+            print("LSTM scaler loaded successfully from model file")
+
         # Load XGBoost model and its scaler if provided
         self.xgboost_model = None
         self.xgboost_scaler = None
@@ -160,7 +162,20 @@ class VideoProctor:
         self.temporal_proctor.scaler.mean_ = means
         self.temporal_proctor.scaler.scale_ = stds
         print("Scaler initialized with pre-calculated mean and std values")
-
+    def initialize_xgboost_scaler(self):
+        """Initialize the XGBoost scaler with default values if loading fails"""
+        print("Initializing XGBoost scaler with default values...")
+        
+        # Create sample data to fit the scaler (excluding timestamp)
+        sample_features = np.array([
+            [0.5, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,  # verification through gaze_zone
+            0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1,  # prohibited items
+            500.0, 500.0]  # H-Distance, F-Distance
+        ])
+        
+        # Fit the scaler with sample data
+        self.xgboost_scaler.fit(sample_features)
+        print("XGBoost scaler initialized with default values")
     def process_frame_pair(self, target_frame, face_frame, hand_frame):
         """
         Process a pair of frames (face and hand) to extract features and make predictions
@@ -179,13 +194,26 @@ class VideoProctor:
         # Extract features for temporal analysis
         features = self.extract_features_from_results(static_results)
         
+        if self.debug_features:
+            print(f"DEBUG: Extracted {len(features)} features")
+        
         # Add features to buffer
         self.feature_buffer.append(features)
+        
+        if self.debug_features:
+            print(f"DEBUG: Buffer size: {len(self.feature_buffer)}/{self.temporal_proctor.window_size}")
         
         # Make temporal prediction if buffer has enough frames
         temporal_prediction = None
         if len(self.feature_buffer) >= self.temporal_proctor.window_size:
+            if self.debug_features:
+                print("DEBUG: Making temporal prediction...")
             temporal_prediction = self.temporal_proctor.make_realtime_prediction(list(self.feature_buffer))
+            if self.debug_features:
+                print(f"DEBUG: Temporal prediction result: {temporal_prediction}")
+        else:
+            if self.debug_features:
+                print(f"DEBUG: Not enough frames for temporal prediction ({len(self.feature_buffer)}/{self.temporal_proctor.window_size})")
         
         # Make XGBoost prediction on current frame if model is available
         xgboost_prediction = None
@@ -433,7 +461,7 @@ class VideoProctor:
             ref_df = pd.read_csv(reference_csv_path)
             ref_features = ref_df.drop(['timestamp', 'is_cheating'], axis=1, errors='ignore')
             
-            expected_feature_names = ref_features.columns.tolist()
+            expected_feature_names = ref_features.columns.tolist();
             
             print("\n=== EXPECTED FEATURES FROM TRAINING DATA ===")
             print(f"Total expected features: {len(expected_feature_names)}")
@@ -459,7 +487,7 @@ class VideoProctor:
             ref_df = pd.read_csv(reference_csv_path)
             ref_features = ref_df.drop(['timestamp', 'is_cheating'], axis=1, errors='ignore')
             
-            expected_feature_names = ref_features.columns.tolist()
+            expected_feature_names = ref_features.columns.tolist();
             
             current_feature_names = [
                 'verification_result', 'num_faces', 'iris_pos', 'iris_ratio', 
@@ -806,6 +834,9 @@ if __name__ == "__main__":
         max_xgb_prediction = max(xgboost_predictions)
         
         print(f"Average XGBoost cheating probability: {avg_xgb_prediction:.4f}")
+        print(f"Maximum XGBoost cheating probability: {max_xgb_prediction:.4f}")
+        print(f"Percentage of frames above threshold (0.5): "
+              f"{sum(p > 0.5 for p in xgboost_predictions) / len(xgboost_predictions) * 100:.2f}%")
         print(f"Maximum XGBoost cheating probability: {max_xgb_prediction:.4f}")
         print(f"Percentage of frames above threshold (0.5): "
               f"{sum(p > 0.5 for p in xgboost_predictions) / len(xgboost_predictions) * 100:.2f}%")

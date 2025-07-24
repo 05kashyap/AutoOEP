@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from Temporal.temporal_models import LSTMModel, GRUModel
+from temporal_models import LSTMModel, GRUModel
 import matplotlib.pyplot as plt
 import time
 
@@ -139,16 +139,21 @@ class SequenceDataset(Dataset):
         return torch.tensor(self.sequences[idx], dtype=torch.float32), torch.tensor(self.labels[idx], dtype=torch.float32)
 
 class TemporalProctor:
-    def __init__(self, window_size=10, model_type='lstm', device=None):
+    def __init__(self, window_size=10, overlap=4, model_type='lstm', device=None):
         """
         Initialize the temporal proctor
         
         Args:
             window_size: Number of previous frames to consider
+            overlap: Number of frames to overlap between sequences.
             model_type: 'lstm' or 'gru'
             device: 'cuda' or 'cpu'
         """
         self.window_size = window_size
+        self.overlap = overlap
+        self.step = self.window_size - self.overlap
+        if self.step <= 0:
+            raise ValueError("Overlap must be smaller than window_size.")
         self.model_type = model_type.lower()
         self.model = None
         self.scaler = CustomScaler()
@@ -187,13 +192,16 @@ class TemporalProctor:
         # Scale the features
         data_scaled = self.scaler.fit_transform(data)
         
-        # Create sequences
+        # Create sequences with overlap
         X, y = [], []
-        for i in range(len(df) - self.window_size):
+        # The step is window_size - overlap
+        for i in range(0, len(data_scaled) - self.window_size + 1, self.step):
             X.append(data_scaled[i:i + self.window_size])
-            y.append(target[i + self.window_size])
+            # The label corresponds to the last frame in the window
+            y.append(target[i + self.window_size - 1])
         
         return np.array(X), np.array(y).reshape(-1, 1)
+    
     
     def build_model(self, input_size):
         """Build the sequential model"""
@@ -209,6 +217,16 @@ class TemporalProctor:
         """Train the model"""
         # Get input size from data
         input_size = X_train.shape[2]
+        print(f"Training data distribution:")
+        unique, counts = np.unique(y_train, return_counts=True)
+        for u, c in zip(unique, counts):
+            print(f"Class {u}: {c} samples ({c/len(y_train)*100:.1f}%)")
+        if len(unique) == 2:
+            minority_ratio = min(counts) / max(counts)
+            print(f"Minority class ratio: {minority_ratio:.3f}")
+            if minority_ratio < 0.1:
+                print("⚠️ WARNING: Severe class imbalance detected!")
+                print("Consider using class weights or different sampling")
         
         # Build model if not already built
         if self.model is None:
@@ -221,8 +239,20 @@ class TemporalProctor:
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=batch_size)
         
-        # Loss function and optimizer
-        criterion = nn.BCELoss()
+        # 🔧 FIX: Loss function and optimizer with proper device handling
+        if len(unique) == 2:
+            # 🔧 Make sure pos_weight is on the correct device
+            pos_weight = torch.tensor([counts[0] / counts[1]], dtype=torch.float32).to(self.device)
+            criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+            print(f"Using weighted loss with pos_weight: {pos_weight.item():.3f}")
+            
+            # 🔧 Also need to modify your model to NOT use sigmoid in final layer
+            # Since BCEWithLogitsLoss applies sigmoid internally
+            print("⚠️ Make sure your model's final layer does NOT use sigmoid activation!")
+            
+        else:
+            criterion = nn.BCELoss()
+        
         optimizer = optim.Adam(self.model.parameters(), lr=lr)
         
         # Early stopping parameters
@@ -249,6 +279,7 @@ class TemporalProctor:
             train_total = 0
             
             for inputs, labels in train_loader:
+                # 🔧 Ensure all tensors are on the same device
                 inputs, labels = inputs.to(self.device), labels.to(self.device)
                 
                 optimizer.zero_grad()
@@ -258,7 +289,15 @@ class TemporalProctor:
                 optimizer.step()
                 
                 train_loss += loss.item() * inputs.size(0)
-                predicted = (outputs > 0.5).float()
+                
+                # 🔧 Fix prediction logic based on loss function
+                if len(unique) == 2 and isinstance(criterion, nn.BCEWithLogitsLoss):
+                    # For BCEWithLogitsLoss, apply sigmoid to get probabilities
+                    predicted = (torch.sigmoid(outputs) > 0.5).float()
+                else:
+                    # For BCELoss, outputs are already probabilities
+                    predicted = (outputs > 0.5).float()
+                    
                 train_total += labels.size(0)
                 train_correct += (predicted == labels).sum().item()
                 
@@ -273,13 +312,20 @@ class TemporalProctor:
             
             with torch.no_grad():
                 for inputs, labels in val_loader:
+                    # 🔧 Ensure all tensors are on the same device
                     inputs, labels = inputs.to(self.device), labels.to(self.device)
                     
                     outputs = self.model(inputs)
                     loss = criterion(outputs, labels)
                     
                     val_loss += loss.item() * inputs.size(0)
-                    predicted = (outputs > 0.5).float()
+                    
+                    # 🔧 Fix prediction logic for validation too
+                    if len(unique) == 2 and isinstance(criterion, nn.BCEWithLogitsLoss):
+                        predicted = (torch.sigmoid(outputs) > 0.5).float()
+                    else:
+                        predicted = (outputs > 0.5).float()
+                        
                     val_total += labels.size(0)
                     val_correct += (predicted == labels).sum().item()
                     
@@ -295,8 +341,8 @@ class TemporalProctor:
             epoch_time = time.time() - start_time
             
             print(f"Epoch {epoch+1}/{epochs} - {epoch_time:.2f}s - "
-                  f"train_loss: {train_loss:.4f}, train_acc: {train_acc:.4f}, "
-                  f"val_loss: {val_loss:.4f}, val_acc: {val_acc:.4f}")
+                f"train_loss: {train_loss:.4f}, train_acc: {train_acc:.4f}, "
+                f"val_loss: {val_loss:.4f}, val_acc: {val_acc:.4f}")
             
             # Early stopping check
             if val_loss < best_val_loss:
@@ -330,11 +376,14 @@ class TemporalProctor:
         
         with torch.no_grad():
             for inputs, labels in test_loader:
-                inputs = inputs.to(self.device)
+                inputs = inputs.to(self.device)  # 🔧 Ensure on correct device
                 outputs = self.model(inputs)
                 
+                # 🔧 Apply sigmoid to get probabilities from logits
+                proba = torch.sigmoid(outputs)
+                
                 y_true.extend(labels.numpy())
-                y_pred_proba.extend(outputs.cpu().numpy())
+                y_pred_proba.extend(proba.cpu().numpy())  # 🔧 Move to CPU for numpy
         
         y_true = np.array(y_true)
         y_pred_proba = np.array(y_pred_proba)
@@ -348,17 +397,10 @@ class TemporalProctor:
         print(cm)
         
         return y_pred_proba, y_pred
-    
+
     def predict_sequence(self, sequence, batch_size=32):
         """
         Predict on a single sequence or batch of sequences
-        
-        Args:
-            sequence: numpy array of shape (seq_len, features) or (batch_size, seq_len, features)
-            batch_size: batch size for prediction
-            
-        Returns:
-            Probability of cheating
         """
         if self.model is None:
             print("No model to use for prediction. Train or load a model first.")
@@ -369,15 +411,17 @@ class TemporalProctor:
             # Single sequence, add batch dimension
             sequence = np.expand_dims(sequence, axis=0)
             
-        # Convert to tensor
+        # Convert to tensor and move to device
         sequence_tensor = torch.tensor(sequence, dtype=torch.float32).to(self.device)
         
         # Predict
         self.model.eval()
         with torch.no_grad():
             output = self.model(sequence_tensor)
+            # 🔧 Apply sigmoid to convert logits to probabilities
+            probabilities = torch.sigmoid(output)
             
-        return output.cpu().numpy()
+        return probabilities.cpu().numpy()  # 🔧 Move to CPU for numpy
     
     def predict_with_sliding_window(self, features, deployment_window_size=None):
         """
@@ -420,6 +464,7 @@ class TemporalProctor:
         predictions = self.predict_sequence(sequences)
         
         return predictions
+    
     def make_realtime_prediction(self, feature_buffer):
         """
         Make a real-time prediction using the current feature buffer
@@ -432,22 +477,50 @@ class TemporalProctor:
         """
         # Ensure we have enough frames
         if len(feature_buffer) < self.window_size:
-            print(f"Not enough features in buffer. Need at least {self.window_size} frames.")
+            print(f"Not enough features in buffer. Need at least {self.window_size} frames, got {len(feature_buffer)}")
             return None
         
         # Take the last window_size frames
         recent_features = feature_buffer[-self.window_size:]
         
-        # Scale features
-        scaled_features = self.scaler.transform(np.array(recent_features))
+        # Convert to numpy array and ensure proper shape
+        recent_features = np.array(recent_features)
+        print(f"DEBUG: Feature buffer shape before scaling: {recent_features.shape}")
         
-        # Reshape for model input
-        model_input = np.expand_dims(scaled_features, axis=0)
+        # Check if scaler is properly initialized
+        if self.scaler.mean_ is None or self.scaler.scale_ is None:
+            print("ERROR: Scaler not properly initialized!")
+            return None
+        
+        # The scaler was trained on features without the timestamp.
+        features_for_scaling = recent_features[:, 1:]
+        
+        # Verify that the number of features matches the model's input size
+        expected_features = self.model.lstm1.input_size if self.model_type == 'lstm' else self.model.gru1.input_size
+        if features_for_scaling.shape[1] != expected_features:
+            print(f"ERROR: Feature mismatch. Model expects {expected_features} features, but got {features_for_scaling.shape[1]}.")
+            return None
+        
+        # Scale features
+        try:
+            scaled_features = self.scaler.transform(features_for_scaling)
+            print(f"DEBUG: Scaled features shape: {features_for_scaling.shape}")
+        except Exception as e:
+            print(f"ERROR in scaling: {e}")
+            return None
+        
+        # Reshape for model input (add batch dimension)
+        model_input = np.expand_dims(features_for_scaling, axis=0)
+        print(f"DEBUG: Model input shape: {model_input.shape}")
         
         # Predict
-        prediction = self.predict_sequence(model_input)
-        
-        return prediction[0][0]
+        try:
+            prediction = self.predict_sequence(model_input)
+            print(f"DEBUG: Raw prediction: {prediction}")
+            return prediction[0][0] if prediction is not None else None
+        except Exception as e:
+            print(f"ERROR in prediction: {e}")
+            return None
     
     def plot_training_history(self, history):
         """Plot training history"""
@@ -474,7 +547,7 @@ class TemporalProctor:
         plt.tight_layout()
         plt.show()
             
-    def save_model(self, path='Proctor/Models/temporal_proctor_model.pt'):
+    def save_model(self, path='Models/temporal_proctor_model.pt'):
         """Save the model and scaler"""
         if self.model is not None:
             torch.save({
@@ -488,7 +561,7 @@ class TemporalProctor:
         else:
             print("No model to save. Train a model first.")
 
-    def load_model(self, path='Proctor/Models/temporal_proctor_model.pt', input_size=None):
+    def load_model(self, path='Models/temporal_proctor_model.pt', input_size=None):
         """Load a saved model and scaler"""
         checkpoint = torch.load(path, map_location=self.device)
         self.window_size = checkpoint.get('window_size', self.window_size)
@@ -512,7 +585,7 @@ class TemporalProctor:
 # Main execution code
 if __name__ == "__main__":
     # Initialize the temporal proctor
-    proctor = TemporalProctor(window_size=15, model_type='lstm')
+    proctor = TemporalProctor(window_size=15, overlap=4, model_type='lstm')
     
     # Load and preprocess the data
     df = proctor.load_data('Datasets/training_proctor_results.csv')
@@ -521,7 +594,7 @@ if __name__ == "__main__":
     X, y = proctor.create_sequences(df)
     
     # Split the data using custom train_test_split
-    X_train, X_temp, y_train, y_temp = custom_train_test_split(X, y, test_size=0.3, random_state=42)
+    X_train, X_temp, y_train, y_temp = custom_train_test_split(X, y, test_size=0.8, random_state=42)
     X_val, X_test, y_val, y_test = custom_train_test_split(X_temp, y_temp, test_size=0.66, random_state=42)
     
     print(f"Training data shape: {X_train.shape}")

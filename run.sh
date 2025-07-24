@@ -9,5 +9,6 @@ python video_proctor.py \
   --xgboost-scaler Models/scaler_20250625_143239.pkl \
   --test-duration 5 \
   --yolo-model Models/OEP_YOLOv11n.pt \
-  --mediapipe-task Models/face_landmarker.task
+  --mediapipe-task Models/face_landmarker.task \
+  --display \
 
