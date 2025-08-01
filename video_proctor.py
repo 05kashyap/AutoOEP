@@ -7,18 +7,20 @@ import argparse
 from collections import deque
 from ultralytics import YOLO
 from Proctor.proctor import StaticProctor
-from Temporal.temporal_proctor import TemporalProctor
+from Temporal.temporal_trainer import TemporalProctor
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import threading
 import queue
-import joblib  # Add for loading XGBoost model
+import joblib  # Add for loading static models
 from sklearn.preprocessing import StandardScaler 
 
 
 class VideoProctor:
-    def __init__(self, lstm_model_path, yolo_model_path, xgboost_model_path=None, xgboost_scaler_path=None, mediapipe_model_path=None, window_size=15, 
-                input_size=None, buffer_size=30, device=None, debug_features=False):
+    def __init__(self, lstm_model_path, yolo_model_path, 
+                 static_model_path=None, static_scaler_path=None, static_metadata_path=None,
+                 xgboost_model_path=None, xgboost_scaler_path=None, mediapipe_model_path=None, window_size=15, 
+                 input_size=None, buffer_size=30, device=None, debug_features=False):
         """
         Initialize the video proctor that combines frame-by-frame analysis with temporal analysis
         """
@@ -63,7 +65,25 @@ class VideoProctor:
         else:
             print("LSTM scaler loaded successfully from model file")
 
-        # Load XGBoost model and its scaler if provided
+        # --- Static Model Loading (generic, not just XGBoost) ---
+        self.static_model = None
+        self.static_scaler = None
+        self.static_metadata = None
+        if static_model_path:
+            try:
+                self.static_model = joblib.load(static_model_path)
+                print(f"Static model loaded from {static_model_path}")
+                # Try to load scaler and metadata if provided
+                if static_scaler_path:
+                    self.static_scaler = joblib.load(static_scaler_path)
+                    print(f"Static scaler loaded from {static_scaler_path}")
+                if static_metadata_path:
+                    self.static_metadata = joblib.load(static_metadata_path)
+                    print(f"Static metadata loaded from {static_metadata_path}")
+            except Exception as e:
+                print(f"Error loading static model/scaler/metadata: {e}")
+        
+        # --- XGBoost model loading (legacy, can be removed if not needed) ---
         self.xgboost_model = None
         self.xgboost_scaler = None
         print(f"Loading XGBoost model from {xgboost_model_path} and scaler from {xgboost_scaler_path}")
@@ -231,16 +251,33 @@ class VideoProctor:
                 print(f"Error in XGBoost prediction: {e}")
                 xgboost_prediction = 0.0
         
+        # --- Static Model Prediction (generic) ---
+        static_model_prediction = None
+        if self.static_model is not None:
+            # Extract features (excluding timestamp)
+            static_features = np.array(self.extract_features_from_results(static_results)[1:]).reshape(1, -1)
+            try:
+                # Apply scaler if available
+                if self.static_scaler is not None:
+                    static_features = self.static_scaler.transform(static_features)
+                # Predict probability
+                static_model_prediction = self.static_model.predict_proba(static_features)[:, 1][0]
+            except Exception as e:
+                print(f"Error in static model prediction: {e}")
+                static_model_prediction = 0.0
+        
         # Add predictions to history for visualization
         current_time = time.time()
         self.timestamps.append(current_time)
         self.predictions.append(temporal_prediction if temporal_prediction is not None else 0)
-        self.static_scores.append(static_results.get('Cheat Score', 0))
+        # Replace static_scores with static_model_prediction if available
+        self.static_scores.append(static_model_prediction if static_model_prediction is not None else static_results.get('Cheat Score', 0))
         self.xgboost_scores.append(xgboost_prediction if xgboost_prediction is not None else 0)
         
         # Combine results
         results = {
             'static_results': static_results,
+            'static_model_prediction': static_model_prediction,
             'temporal_prediction': temporal_prediction,
             'xgboost_prediction': xgboost_prediction,
             'timestamp': current_time
@@ -396,6 +433,11 @@ class VideoProctor:
         
         f_distance = results.get('F-Distance')
         features.append(float(f_distance) if f_distance is not None else 1000)
+        
+        # --- DEBUG: Compare with expected feature count ---
+        expected_feature_count = 23  # Should match training
+        if len(features) != expected_feature_count:
+            print(f"WARNING: Extracted {len(features)} features, expected {expected_feature_count}")
         
         if hasattr(self, 'log_features') and self.log_features:
             feature_names = [
@@ -786,6 +828,9 @@ def parse_arguments():
     parser.add_argument('--display', action='store_true', help='Display processed video')
     parser.add_argument('--test-duration', type=int, default=None, 
                         help='Duration (in seconds) to process for testing')
+    parser.add_argument('--static-model', type=str, default=None, help='Path to saved static model (LightGBM/XGBoost/RandomForest)')
+    parser.add_argument('--static-scaler', type=str, default=None, help='Path to static model scaler (optional)')
+    parser.add_argument('--static-metadata', type=str, default=None, help='Path to static model metadata (optional)')
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -795,6 +840,9 @@ if __name__ == "__main__":
     proctor = VideoProctor(
         lstm_model_path=args.lstm_model,
         yolo_model_path=args.yolo_model,
+        static_model_path=args.static_model,
+        static_scaler_path=args.static_scaler,
+        static_metadata_path=args.static_metadata,
         xgboost_model_path=args.xgboost_model,
         xgboost_scaler_path=args.xgboost_scaler,
         mediapipe_model_path=args.mediapipe_task,

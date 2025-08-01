@@ -59,7 +59,7 @@ class GRUModel(nn.Module):
         self.bn3 = nn.BatchNorm1d(32)
         self.relu = nn.ReLU()
         self.fc2 = nn.Linear(32, output_size)
-        self.sigmoid = nn.Sigmoid()
+        # self.sigmoid = nn.Sigmoid()  # Removed for consistency with LSTM
         
     def forward(self, x):
         # First GRU layer
@@ -81,5 +81,5 @@ class GRUModel(nn.Module):
         x = self.bn3(x)
         x = self.relu(x)
         x = self.fc2(x)
-        x = self.sigmoid(x)
+        # x = self.sigmoid(x)  # Removed
         return x

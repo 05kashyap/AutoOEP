@@ -1,11 +1,14 @@
 import cv2
-from deepface import DeepFace
+import torch
 import numpy as np
 import mediapipe as mp
-from VisionUtils.FaceDetailsCalculator import FaceDetails
-import torch
-from VisionUtils.handpose import inference
 from ultralytics import YOLO
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from VisionUtils.FaceDetailsCalculator import FaceDetails
+from VisionUtils.handpose import inference
 from VisionUtils.face_inference import get_face_inference
 
 BaseOptions = mp.tasks.BaseOptions

@@ -33,7 +33,19 @@ def get_cheating_intervals():
         intervals.append((timedelta(seconds=float(start)), timedelta(seconds=float(end))))
     return intervals
 
-def sort_frames(input_folder, cheating_folder, not_cheating_folder, cheating_intervals, fps):
+def get_classification_mode():
+    print("\nChoose classification mode:")
+    print("1. Manual intervals (specify cheating time intervals)")
+    print("2. All frames as cheating")
+    print("3. All frames as not cheating")
+    
+    while True:
+        choice = input("Enter your choice (1/2/3): ").strip()
+        if choice in ['1', '2', '3']:
+            return int(choice)
+        print("Invalid choice. Please enter 1, 2, or 3.")
+
+def sort_frames(input_folder, cheating_folder, not_cheating_folder, cheating_intervals, fps, mode=1):
     if not os.path.exists(cheating_folder):
         os.makedirs(cheating_folder)
     if not os.path.exists(not_cheating_folder):
@@ -41,9 +53,13 @@ def sort_frames(input_folder, cheating_folder, not_cheating_folder, cheating_int
 
     for filename in os.listdir(input_folder):
         if filename.endswith(".jpg"):
-            frame_time = timedelta(seconds=int(filename.split("_")[1]) / fps)
-            
-            is_cheating = any(start <= frame_time < end for start, end in cheating_intervals)
+            if mode == 1:  # Manual intervals
+                frame_time = timedelta(seconds=int(filename.split("_")[1]) / fps)
+                is_cheating = any(start <= frame_time < end for start, end in cheating_intervals)
+            elif mode == 2:  # All frames as cheating
+                is_cheating = True
+            else:  # mode == 3, All frames as not cheating
+                is_cheating = False
             
             if is_cheating:
                 os.rename(os.path.join(input_folder, filename),
@@ -59,8 +75,15 @@ def main():
     not_cheating_folder = "not_cheating_frames"
 
     fps = extract_frames(video_path, output_folder)
-    cheating_intervals = get_cheating_intervals()
-    sort_frames(output_folder, cheating_folder, not_cheating_folder, cheating_intervals, fps)
+    
+    mode = get_classification_mode()
+    
+    if mode == 1:
+        cheating_intervals = get_cheating_intervals()
+    else:
+        cheating_intervals = []
+    
+    sort_frames(output_folder, cheating_folder, not_cheating_folder, cheating_intervals, fps, mode)
 
     print("Processing complete. Frames have been sorted into 'cheating_frames' and 'not_cheating_frames' folders.")
 
