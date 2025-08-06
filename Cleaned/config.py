@@ -141,6 +141,17 @@ class Config:
                 print(f"  - {path}")
         
         return len(missing_paths) == 0
+    
+    @classmethod
+    def validate_mediapipe_model(cls):
+        """Validate that MediaPipe face landmarker model exists"""
+        if not cls.DEFAULT_MEDIAPIPE_MODEL:
+            raise ValueError("DEFAULT_MEDIAPIPE_MODEL is not configured")
+        
+        if not os.path.exists(cls.DEFAULT_MEDIAPIPE_MODEL):
+            raise FileNotFoundError(f"MediaPipe face landmarker model not found: {cls.DEFAULT_MEDIAPIPE_MODEL}")
+        
+        return True
 
 
 class DebugConfig:

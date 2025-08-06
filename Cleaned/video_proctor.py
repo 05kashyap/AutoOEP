@@ -86,7 +86,7 @@ class VideoProctor:
             self.static_proctor = StaticProctor(
                 yolo_model, 
                 media_pipe_dict, 
-                Config.MEDIAPIPE_MODEL_PATH
+                Config.DEFAULT_MEDIAPIPE_MODEL
             )
             
             # Initialize temporal trainer with STRICT requirements
@@ -111,7 +111,7 @@ class VideoProctor:
             print("💡 Ensure all required model files are present:")
             print(f"   - Temporal models in: {self.model_save_dir}")
             print(f"   - Static model: {Config.DEFAULT_STATIC_MODEL}")
-            print(f"   - MediaPipe model: {Config.MEDIAPIPE_MODEL_PATH}")
+            print(f"   - MediaPipe model: {Config.DEFAULT_MEDIAPIPE_MODEL}")
             raise RuntimeError(f"Failed to initialize VideoProctor: {e}")
             raise
     

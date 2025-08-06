@@ -259,46 +259,57 @@ def process_input_videos():
             print(f"⚠️ MediaPipe initialization failed: {e}")
             media_pipe_dict = None
         
-        # Initialize MediaPipe Face Landmarker
+        # Initialize MediaPipe Face Landmarker with strict Config path
         face_landmarker_path = None
         try:
-            face_landmarker_path = inputs_dir / "Models" / "face_landmarker.task"
-            if face_landmarker_path.exists():
-                print(f"✅ Face landmarker model found at: {face_landmarker_path}")
-            else:
-                print(f"❌ Face landmarker model not found at: {face_landmarker_path}")
-                # Try alternative paths
-                alt_paths = [
-                    "face_landmarker.task",
-                    "Models/face_landmarker.task",
-                    inputs_dir / "face_landmarker.task"
-                ]
-                for alt_path in alt_paths:
-                    if Path(alt_path).exists():
-                        face_landmarker_path = alt_path
-                        print(f"✅ Found face landmarker at alternative path: {face_landmarker_path}")
-                        break
-                else:
-                    print("⚠️ Face landmarker model not found")
-                    face_landmarker_path = None
+            # STRICT: Use config path and fail if not available
+            if not CONFIG_LOADED:
+                raise RuntimeError("Config module not loaded - MediaPipe model path unavailable")
+            
+            # Import Config here to avoid unbound variable issues
+            from config import Config
+            
+            if not hasattr(Config, 'DEFAULT_MEDIAPIPE_MODEL'):
+                raise RuntimeError("DEFAULT_MEDIAPIPE_MODEL not configured in config.py")
+                
+            face_landmarker_path = Path(Config.DEFAULT_MEDIAPIPE_MODEL)
+            if not face_landmarker_path.exists():
+                raise FileNotFoundError(f"MediaPipe face landmarker model not found at configured path: {face_landmarker_path}")
+            
+            print(f"✅ MediaPipe face landmarker model found at: {face_landmarker_path}")
+            
         except Exception as e:
-            print(f"⚠️ Face landmarker setup issue: {e}")
+            print(f"❌ MediaPipe face landmarker setup failed: {e}")
+            print("💡 Required: MediaPipe face landmarker model must be present at configured path")
+            
+            # Try to get the expected path for error message
+            try:
+                from config import Config
+                expected_path = Config.DEFAULT_MEDIAPIPE_MODEL
+            except:
+                expected_path = 'Config not loaded'
+            print(f"   Expected path: {expected_path}")
             face_landmarker_path = None
         
         # Initialize Static Proctor
         print("\n🔍 Initializing Static Proctor...")
         static_proctor = None
-        if yolo_model:
+        if yolo_model and face_landmarker_path:
             try:
-                # Initialize with available components
-                face_landmarker_str = str(face_landmarker_path) if face_landmarker_path else "face_landmarker.task"
-                static_proctor = StaticProctor(yolo_model, media_pipe_dict, face_landmarker_str)
+                # Initialize with required components - all must be present
+                static_proctor = StaticProctor(yolo_model, media_pipe_dict, str(face_landmarker_path))
                 print("✅ Static Proctor initialized successfully")
             except Exception as e:
-                print(f"⚠️ Static Proctor initialization failed: {e}")
+                print(f"❌ Static Proctor initialization failed: {e}")
                 static_proctor = None
         else:
-            print("⚠️ Static Proctor skipped due to missing YOLO model")
+            missing_components = []
+            if not yolo_model:
+                missing_components.append("YOLO model")
+            if not face_landmarker_path:
+                missing_components.append("MediaPipe face landmarker")
+            print(f"❌ Static Proctor skipped due to missing components: {', '.join(missing_components)}")
+            print("💡 All required model files must be present for proctor functionality")
         
         # Initialize Temporal Trainer
         print("\n⏱️ Initializing Temporal Trainer...")
@@ -369,7 +380,11 @@ def process_input_videos():
                         cheat_score = static_result.get('Cheat Score', 0) if static_result else 0
                         
                         # Use configurable threshold
-                        cheat_threshold = Config.CHEATING_THRESHOLD if CONFIG_LOADED else 0.5
+                        try:
+                            from config import Config
+                            cheat_threshold = Config.CHEATING_THRESHOLD if CONFIG_LOADED else 0.5
+                        except:
+                            cheat_threshold = 0.5
                         
                         if cheat_score > cheat_threshold:  # Cheating detected!
                             total_cheat_count += 1

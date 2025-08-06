@@ -7,6 +7,7 @@ import mediapipe as mp
 from ultralytics import YOLO
 import sys
 import os
+from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -14,6 +15,13 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from VisionUtils.handpose import inference
 from VisionUtils.face_inference import get_face_inference
 from core.image_processor import ImageProcessor
+
+try:
+    from config import Config
+    CONFIG_LOADED = True
+except ImportError:
+    print("Warning: Could not load config module")
+    CONFIG_LOADED = False
 
 # MediaPipe setup
 BaseOptions = mp.tasks.BaseOptions
@@ -45,17 +53,30 @@ class StaticProctor:
         self._setup_face_landmarker(model_path)
     
     def _setup_face_landmarker(self, model_path):
-        """Setup MediaPipe face landmarker"""
-        with open(model_path, 'rb') as file:
-            model_data = file.read()
+        """Setup MediaPipe face landmarker with validation"""
+        # Validate that model path exists
+        if not model_path:
+            raise ValueError("MediaPipe face landmarker model path is required")
         
-        self.options = FaceLandmarkerOptions(
-            base_options=BaseOptions(model_asset_buffer=model_data),
-            running_mode=VisionRunningMode.IMAGE,
-            num_faces=3
-        )
+        model_path = Path(model_path)
+        if not model_path.exists():
+            raise FileNotFoundError(f"MediaPipe face landmarker model not found: {model_path}")
         
-        self.landmarker = FaceLandmarker.create_from_options(self.options)
+        try:
+            with open(model_path, 'rb') as file:
+                model_data = file.read()
+            
+            self.options = FaceLandmarkerOptions(
+                base_options=BaseOptions(model_asset_buffer=model_data),
+                running_mode=VisionRunningMode.IMAGE,
+                num_faces=3
+            )
+            
+            self.landmarker = FaceLandmarker.create_from_options(self.options)
+            print(f"✅ MediaPipe face landmarker initialized with model: {model_path}")
+            
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize MediaPipe face landmarker: {e}")
     
     def process_frames(self, target_frame, face_frame, hand_frame):
         """
@@ -199,7 +220,13 @@ def create_test_proctor():
         'mpdraw': mp.solutions.drawing_utils
     }
     
-    model_path = 'face_landmarker.task'
+    # Use Config path for MediaPipe model
+    if CONFIG_LOADED:
+        from config import Config
+        model_path = Config.DEFAULT_MEDIAPIPE_MODEL
+    else:
+        raise RuntimeError("Config not loaded - cannot determine MediaPipe model path")
+    
     return StaticProctor(model, media_pipe_dict, model_path)
 
 
