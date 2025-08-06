@@ -1,7 +1,6 @@
 """
 Main entry point for the refactored video proctor application with full functionality
 """
-import os
 import sys
 import argparse
 import cv2
