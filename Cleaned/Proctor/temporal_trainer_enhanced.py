@@ -10,7 +10,7 @@ import sys
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Import the advanced models if available
+# Import the advanced models - REQUIRED
 try:
     from .temporal_models import LSTMModel, GRUModel
     HAS_ADVANCED_MODELS = True
@@ -20,8 +20,7 @@ except ImportError:
         from temporal_models import LSTMModel, GRUModel
         HAS_ADVANCED_MODELS = True
     except ImportError:
-        HAS_ADVANCED_MODELS = False
-        print("Warning: Advanced temporal models not available, using fallback")
+        raise ImportError("PyTorch temporal models (LSTMModel, GRUModel) are required but not available. Please ensure temporal_models.py is present.")
 
 # Import feature extractor for proper feature processing
 try:
@@ -29,7 +28,7 @@ try:
     HAS_FEATURE_EXTRACTOR = True
 except ImportError:
     HAS_FEATURE_EXTRACTOR = False
-    print("Warning: FeatureExtractor not available, using simple features")
+    raise ImportError("FeatureExtractor is required but not available. Please ensure core/feature_extractor.py exists.")
 
 # Custom scaler for compatibility
 class SimpleScaler:
@@ -88,20 +87,17 @@ class TemporalTrainerEnhanced:
         # Fallback to rule-based if no models available
         self.use_pytorch_model = False
         
-        # Initialize feature extractor for proper feature processing
-        if HAS_FEATURE_EXTRACTOR:
-            self.feature_extractor = FeatureExtractor()
-        else:
-            self.feature_extractor = None
+        # Initialize feature extractor - REQUIRED
+        self.feature_extractor = FeatureExtractor()
         
         print(f"Enhanced TemporalTrainer initialized with window_size={window_size}, device={self.device}")
-        print(f"Advanced models available: {HAS_ADVANCED_MODELS}")
+        print(f"✅ All required components loaded successfully")
         
         # Try to auto-load models from default locations
         self._try_auto_load_models()
     
     def _try_auto_load_models(self):
-        """Try to automatically load PyTorch models from default locations"""
+        """Try to automatically load PyTorch models from default locations - STRICT mode"""
         default_paths = [
             'Inputs/Models',
             'Models',
@@ -115,10 +111,13 @@ class TemporalTrainerEnhanced:
                     self.load_models(path)
                     if self.use_pytorch_model:
                         print(f"✅ Auto-loaded PyTorch models from {path}")
-                        break
+                        return
                 except Exception as e:
-                    print(f"⚠️ Failed to auto-load from {path}: {e}")
+                    # Continue to next path if current fails
                     continue
+        
+        # If we reach here, no models were found
+        print("⚠️ No PyTorch models auto-loaded. Models must be loaded explicitly before use.")
     
     def add_frame_features(self, features_dict):
         """
@@ -139,52 +138,21 @@ class TemporalTrainerEnhanced:
     
     def _extract_feature_vector(self, features_dict):
         """
-        Extract numerical feature vector from features dictionary using proper FeatureExtractor
+        Extract numerical feature vector from features dictionary using FeatureExtractor
         
         Args:
             features_dict: Dictionary with detection results
             
         Returns:
-            List of numerical features (23 features expected by trained models)
+            List of numerical features (exactly 23 features required)
         """
-        if self.feature_extractor is not None:
-            # Use proper feature extractor for full 23-feature vector
-            try:
-                features = self.feature_extractor.extract_features_from_results(features_dict)
-                if len(features) == 23:
-                    return features
-                else:
-                    print(f"Warning: FeatureExtractor returned {len(features)} features, expected 23")
-            except Exception as e:
-                print(f"Warning: FeatureExtractor failed: {e}, using fallback")
+        # Use proper feature extractor for full 23-feature vector
+        features = self.feature_extractor.extract_features_from_results(features_dict)
         
-        # Fallback to simple feature extraction (pad to 23 features)
-        features = []
+        if len(features) != 23:
+            raise RuntimeError(f"FeatureExtractor returned {len(features)} features, expected exactly 23")
         
-        # Extract key features (convert boolean to 0/1)
-        key_features = [
-            'H-Hand Detected', 'F-Hand Detected',
-            'H-Prohibited Item', 'F-Prohibited Item',
-            'verification_result', 'num_faces', 'Cheat Score'
-        ]
-        
-        for feature in key_features:
-            if feature in features_dict:
-                value = features_dict[feature]
-                if isinstance(value, bool):
-                    features.append(1.0 if value else 0.0)
-                elif isinstance(value, (int, float)):
-                    features.append(float(value))
-                else:
-                    features.append(0.0)
-            else:
-                features.append(0.0)
-        
-        # Pad with zeros to reach 23 features (to match trained model expectation)
-        while len(features) < 23:
-            features.append(0.0)
-        
-        return features[:23]  # Ensure exactly 23 features
+        return features
     
     def get_temporal_prediction(self):
         """
@@ -273,14 +241,17 @@ class TemporalTrainerEnhanced:
     
     def load_models(self, save_dir):
         """
-        Load temporal models from directory
+        Load temporal models from directory - STRICT mode, no fallbacks
         
         Args:
             save_dir: Directory containing saved models
+            
+        Raises:
+            FileNotFoundError: If required model files are not found
+            RuntimeError: If models cannot be loaded properly
         """
         if not os.path.exists(save_dir):
-            print(f"Model directory not found: {save_dir}")
-            return
+            raise FileNotFoundError(f"Model directory not found: {save_dir}")
         
         # Try to load PyTorch model first
         model_found = False
@@ -289,42 +260,46 @@ class TemporalTrainerEnhanced:
         from config import Config
         if hasattr(Config, 'DEFAULT_TEMPORAL_MODEL'):
             pytorch_model_path = Config.DEFAULT_TEMPORAL_MODEL
-            if os.path.exists(pytorch_model_path):
-                print(f"Found configured temporal model: {pytorch_model_path}")
-                model_found = self._load_pytorch_model(pytorch_model_path)
-                if model_found:
-                    print(f"Successfully loaded {getattr(Config, 'DEFAULT_TEMPORAL_MODEL_TYPE', 'LSTM')} model")
+            if not os.path.exists(pytorch_model_path):
+                raise FileNotFoundError(f"Configured temporal model not found: {pytorch_model_path}")
+            
+            print(f"Loading configured temporal model: {pytorch_model_path}")
+            self._load_pytorch_model(pytorch_model_path)
+            model_found = True
+            print(f"Successfully loaded {getattr(Config, 'DEFAULT_TEMPORAL_MODEL_TYPE', 'LSTM')} model")
+        else:
+            # Search for PyTorch model files in directory
+            pytorch_files = [f for f in os.listdir(save_dir) if f.endswith('.pt') or f.endswith('.pth')]
+            
+            if not pytorch_files:
+                raise FileNotFoundError(f"No PyTorch model files (.pt or .pth) found in {save_dir}")
+            
+            # Load the first PyTorch model found
+            model_path = os.path.join(save_dir, pytorch_files[0])
+            print(f"Loading PyTorch model: {model_path}")
+            self._load_pytorch_model(model_path)
+            model_found = True
         
-        # Check for models in the save directory
-        if not model_found:
-            for filename in os.listdir(save_dir):
-                if filename.endswith('.pt') or filename.endswith('.pth'):
-                    model_path = os.path.join(save_dir, filename)
-                    if self._load_pytorch_model(model_path):
-                        model_found = True
-                        break
-        
-        # Fallback to config file
-        if not model_found:
-            self._load_config_file(save_dir)
+        if not model_found or not self.use_pytorch_model:
+            raise RuntimeError("Failed to load PyTorch temporal models - system requires advanced temporal analysis")
     
     def _load_pytorch_model(self, model_path):
         """
-        Load PyTorch model from file
+        Load PyTorch model from file - STRICT mode, no fallbacks
         
         Args:
             model_path: Path to model file
             
-        Returns:
-            bool: True if successfully loaded
+        Raises:
+            RuntimeError: If model cannot be loaded
+            FileNotFoundError: If model file doesn't exist
         """
-        if not HAS_ADVANCED_MODELS:
-            print("Advanced models not available, skipping PyTorch model loading")
-            return False
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file not found: {model_path}")
+        
+        print(f"Loading PyTorch temporal model from: {model_path}")
         
         try:
-            print(f"Loading PyTorch temporal model from: {model_path}")
-            
             # Load checkpoint
             checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
             
@@ -337,7 +312,7 @@ class TemporalTrainerEnhanced:
                 hidden_size2 = config.get('hidden_size2', 64)
                 output_size = config.get('output_size', 1)
             else:
-                # Default configuration
+                # Default configuration for older models
                 model_type = 'LSTM'
                 input_size = 23
                 hidden_size1 = 128
@@ -350,8 +325,7 @@ class TemporalTrainerEnhanced:
             elif model_type.upper() == 'GRU':
                 self.model = GRUModel(input_size, hidden_size1, hidden_size2, output_size)
             else:
-                print(f"Unknown model type: {model_type}")
-                return False
+                raise RuntimeError(f"Unsupported model type: {model_type}")
             
             self.model.to(self.device)
             self.model_type = model_type
@@ -369,41 +343,17 @@ class TemporalTrainerEnhanced:
                     self.scaler.mean_ = checkpoint['scaler_mean']
                     self.scaler.scale_ = checkpoint['scaler_scale']
                     self.scaler.fitted = True
+                    print("✅ Scaler parameters loaded from checkpoint")
+                else:
+                    print("⚠️ No scaler parameters in checkpoint, using default scaling")
             else:
                 self.model.load_state_dict(checkpoint)
             
             self.use_pytorch_model = True
-            print(f"Successfully loaded {model_type} model with {input_size} features")
-            return True
+            print(f"✅ Successfully loaded {model_type} model with {input_size} features")
             
         except Exception as e:
-            print(f"Error loading PyTorch model: {e}")
-            return False
-    
-    def _load_config_file(self, save_dir):
-        """
-        Load simple configuration file (fallback)
-        
-        Args:
-            save_dir: Directory containing config file
-        """
-        config_path = os.path.join(save_dir, 'temporal_config.txt')
-        if os.path.exists(config_path):
-            try:
-                with open(config_path, 'r') as f:
-                    for line in f:
-                        if '=' in line:
-                            key, value = line.strip().split('=', 1)
-                            if key == 'window_size':
-                                self.window_size = int(value)
-                            elif key == 'threshold':
-                                self.threshold = float(value)
-                            elif key == 'device':
-                                self.device = value
-                
-                print(f"Temporal trainer configuration loaded from {save_dir}")
-            except Exception as e:
-                print(f"Warning: Failed to load temporal config: {e}")
+            raise RuntimeError(f"Failed to load PyTorch model from {model_path}: {e}")
     
     def save_models(self, save_dir):
         """

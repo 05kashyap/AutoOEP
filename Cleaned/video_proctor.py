@@ -89,20 +89,30 @@ class VideoProctor:
                 Config.MEDIAPIPE_MODEL_PATH
             )
             
-            # Initialize temporal trainer
+            # Initialize temporal trainer with STRICT requirements
+            print("📦 Initializing enhanced temporal trainer...")
             self.temporal_trainer = TemporalTrainerEnhanced()
             
-            # Load pre-trained temporal models if available
-            if os.path.exists(self.model_save_dir):
-                self.temporal_trainer.load_models(self.model_save_dir)
+            # Load pre-trained temporal models - REQUIRED, no fallbacks
+            if not os.path.exists(self.model_save_dir):
+                raise FileNotFoundError(f"Model directory is required but not found: {self.model_save_dir}")
             
-            # Load static models (LightGBM, scaler, metadata)
+            print(f"📥 Loading temporal models from: {self.model_save_dir}")
+            self.temporal_trainer.load_models(self.model_save_dir)
+            print("✅ Temporal models loaded successfully")
+            
+            # Load static models (LightGBM, scaler, metadata) - REQUIRED
             self._load_static_models()
             
-            print("Models setup completed")
+            print("✅ All models setup completed successfully")
             
         except Exception as e:
-            print(f"Error setting up models: {e}")
+            print(f"❌ CRITICAL ERROR in model setup: {e}")
+            print("💡 Ensure all required model files are present:")
+            print(f"   - Temporal models in: {self.model_save_dir}")
+            print(f"   - Static model: {Config.DEFAULT_STATIC_MODEL}")
+            print(f"   - MediaPipe model: {Config.MEDIAPIPE_MODEL_PATH}")
+            raise RuntimeError(f"Failed to initialize VideoProctor: {e}")
             raise
     
     def _setup_yolo_and_mediapipe(self):
@@ -110,25 +120,39 @@ class VideoProctor:
         return self.model_manager.load_detection_models()
     
     def _load_static_models(self):
-        """Load static models (LightGBM, scaler, metadata) if available"""
+        """Load static models (LightGBM, scaler, metadata) - STRICT mode, all required"""
         try:
+            # Verify all static model components exist
+            if not hasattr(Config, 'DEFAULT_STATIC_MODEL'):
+                raise RuntimeError("DEFAULT_STATIC_MODEL not configured")
+            
+            if not os.path.exists(Config.DEFAULT_STATIC_MODEL):
+                raise FileNotFoundError(f"Static model file not found: {Config.DEFAULT_STATIC_MODEL}")
+            
+            scaler_path = getattr(Config, 'DEFAULT_STATIC_SCALER', None)
+            metadata_path = getattr(Config, 'DEFAULT_STATIC_METADATA', None)
+            
+            if scaler_path and not os.path.exists(scaler_path):
+                raise FileNotFoundError(f"Scaler file not found: {scaler_path}")
+            
+            if metadata_path and not os.path.exists(metadata_path):
+                raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
+            
             # Load static model components
-            if hasattr(Config, 'DEFAULT_STATIC_MODEL') and os.path.exists(Config.DEFAULT_STATIC_MODEL):
-                scaler_path = getattr(Config, 'DEFAULT_STATIC_SCALER', None)
-                metadata_path = getattr(Config, 'DEFAULT_STATIC_METADATA', None)
-                
-                self.model_manager.load_static_model(
-                    Config.DEFAULT_STATIC_MODEL,
-                    scaler_path if scaler_path and os.path.exists(scaler_path) else None,
-                    metadata_path if metadata_path and os.path.exists(metadata_path) else None
-                )
-                print("✅ Static models (LightGBM, scaler, metadata) loaded successfully")
-            else:
-                print("⚠️ Static model files not found, using fallback methods")
+            self.model_manager.load_static_model(
+                Config.DEFAULT_STATIC_MODEL,
+                scaler_path,
+                metadata_path
+            )
+            print("✅ Static models (LightGBM, scaler, metadata) loaded successfully")
                 
         except Exception as e:
-            print(f"❌ Error loading static models: {e}")
-            print("🔄 Continuing with fallback methods")
+            print(f"❌ CRITICAL ERROR loading static models: {e}")
+            print("💡 Required static model files:")
+            print(f"   - Model: {getattr(Config, 'DEFAULT_STATIC_MODEL', 'NOT_CONFIGURED')}")
+            print(f"   - Scaler: {getattr(Config, 'DEFAULT_STATIC_SCALER', 'NOT_CONFIGURED')}")
+            print(f"   - Metadata: {getattr(Config, 'DEFAULT_STATIC_METADATA', 'NOT_CONFIGURED')}")
+            raise RuntimeError(f"Failed to load required static models: {e}")
     
     def process_frame_pair(self, face_frame, hand_frame):
         """
