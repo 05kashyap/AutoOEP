@@ -206,7 +206,18 @@ def create_test_proctor():
     import torch
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = YOLO('Models/OEP_YOLOv11n.pt')
+    
+    # Use Config for YOLO model path
+    if CONFIG_LOADED:
+        from config import Config
+        yolo_model_path = Config.DEFAULT_YOLO_MODEL
+    else:
+        raise RuntimeError("Config not loaded - cannot determine YOLO model path")
+    
+    if not Path(yolo_model_path).exists():
+        raise FileNotFoundError(f"YOLO model not found: {yolo_model_path}")
+    
+    model = YOLO(yolo_model_path)
     
     mpHands = mp.solutions.hands
     media_pipe_dict = {

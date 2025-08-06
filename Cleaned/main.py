@@ -203,34 +203,39 @@ def process_input_videos():
             return False
         print(f"✅ Target image loaded: {target_frame.shape}")
         
-        # Initialize YOLO model
+        # Initialize YOLO model with strict Config path
         print("\n🤖 Initializing AI models...")
         yolo_model = None
         try:
-            yolo_model_path = inputs_dir / "Models" / "OEP_YOLOv11n.pt"
-            if yolo_model_path.exists():
-                print(f"✅ Found YOLO model at: {yolo_model_path}")
-                yolo_model = YOLO(str(yolo_model_path))
-                print("✅ YOLO model loaded successfully")
-            else:
-                print(f"❌ YOLO model not found at: {yolo_model_path}")
-                # Try alternative paths
-                alt_paths = [
-                    "Models/OEP_YOLOv11n.pt",
-                    "OEP_YOLOv11n.pt",
-                    inputs_dir / "OEP_YOLOv11n.pt"
-                ]
-                for alt_path in alt_paths:
-                    if Path(alt_path).exists():
-                        print(f"✅ Found YOLO model at alternative path: {alt_path}")
-                        yolo_model = YOLO(str(alt_path))
-                        print("✅ YOLO model loaded successfully")
-                        break
-                else:
-                    print("⚠️ YOLO model not found, using basic detection")
-                    yolo_model = None
+            # STRICT: Use config path and fail if not available
+            if not CONFIG_LOADED:
+                raise RuntimeError("Config module not loaded - YOLO model path unavailable")
+            
+            # Import Config here to avoid unbound variable issues
+            from config import Config
+            
+            if not hasattr(Config, 'DEFAULT_YOLO_MODEL'):
+                raise RuntimeError("DEFAULT_YOLO_MODEL not configured in config.py")
+                
+            yolo_model_path = Path(Config.DEFAULT_YOLO_MODEL)
+            if not yolo_model_path.exists():
+                raise FileNotFoundError(f"YOLO model not found at configured path: {yolo_model_path}")
+            
+            print(f"✅ YOLO model found at configured path: {yolo_model_path}")
+            yolo_model = YOLO(str(yolo_model_path))
+            print("✅ YOLO model loaded successfully")
+            
         except Exception as e:
-            print(f"⚠️ YOLO model failed to load: {e}")
+            print(f"❌ YOLO model setup failed: {e}")
+            print("💡 Required: YOLO model must be present at configured path")
+            
+            # Try to get the expected path for error message
+            try:
+                from config import Config
+                expected_path = Config.DEFAULT_YOLO_MODEL
+            except:
+                expected_path = 'Config not loaded'
+            print(f"   Expected path: {expected_path}")
             yolo_model = None
         
         # Initialize MediaPipe
@@ -308,8 +313,8 @@ def process_input_videos():
                 missing_components.append("YOLO model")
             if not face_landmarker_path:
                 missing_components.append("MediaPipe face landmarker")
-            print(f"❌ Static Proctor skipped due to missing components: {', '.join(missing_components)}")
             print("💡 All required model files must be present for proctor functionality")
+            raise RuntimeError(f"Static Proctor skipped due to missing components: {', '.join(missing_components)}")
         
         # Initialize Temporal Trainer
         print("\n⏱️ Initializing Temporal Trainer...")
@@ -318,8 +323,8 @@ def process_input_videos():
             temporal_trainer = TemporalTrainerEnhanced(window_size=15)
             print("✅ Temporal Trainer initialized successfully")
         except Exception as e:
-            print(f"❌ Temporal Trainer initialization failed: {e}")
             temporal_trainer = None
+            raise RuntimeError(f"Temporal Trainer initialization failed: {e}")
         
         # Open video files
         print("\n📹 Opening video files...")

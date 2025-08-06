@@ -104,33 +104,28 @@ class ModelManager:
             return 0.0
     
     def load_detection_models(self):
-        """Load YOLO and MediaPipe models for detection"""
+        """Load YOLO and MediaPipe models for detection - STRICT mode, all required"""
         try:
             from ultralytics import YOLO
             import mediapipe as mp
             
-            # Load YOLO model
+            # STRICT: Load YOLO model from Config path only
             yolo_model_path = Config.DEFAULT_YOLO_MODEL
             if not os.path.exists(yolo_model_path):
-                # Try alternative paths
-                alt_paths = [
-                    "Inputs/Models/OEP_YOLOv11n.pt",
-                    "Models/OEP_YOLOv11n.pt"
-                ]
-                for alt_path in alt_paths:
-                    if os.path.exists(alt_path):
-                        yolo_model_path = alt_path
-                        break
+                raise FileNotFoundError(f"YOLO model not found at configured path: {yolo_model_path}")
             
-            print(f"Loading YOLO model from: {yolo_model_path}")
+            print(f"Loading YOLO model from configured path: {yolo_model_path}")
             yolo_model = YOLO(yolo_model_path)
             
-            # Setup MediaPipe
+            # Setup MediaPipe using Config
             media_pipe_dict = Config.get_mediapipe_config()
             
             print("✅ Detection models loaded successfully")
             return yolo_model, media_pipe_dict
             
         except Exception as e:
-            print(f"❌ Error loading detection models: {e}")
+            print(f"❌ CRITICAL ERROR loading detection models: {e}")
+            print("💡 Ensure all required model files are present:")
+            print(f"   - YOLO model: {Config.DEFAULT_YOLO_MODEL}")
+            raise RuntimeError(f"Failed to load detection models: {e}")
             raise

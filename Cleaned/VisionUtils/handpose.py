@@ -6,6 +6,19 @@ import os
 import warnings
 import logging
 from ultralytics import YOLO 
+from pathlib import Path
+import sys
+
+# Add parent directory to path for imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+try:
+    from config import Config
+    CONFIG_LOADED = True
+except ImportError:
+    print("Warning: Could not load config module")
+    CONFIG_LOADED = False
+
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 logging.getLogger('mediapipe').setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -226,8 +239,22 @@ def inference(frame, yolo_model, media_pipe):
 if __name__ == '__main__':
     cap = initialize_camera()
     
-    # Initialize YOLOv11 model
-    model = YOLO('/home/kashyap/Documents/Projects/PROCTOR/CheatusDeletus/Proctor/OEP_YOLOv11n.pt')
+    # Initialize YOLOv11 model using Config path
+    try:
+        if not CONFIG_LOADED:
+            raise RuntimeError("Config module not loaded - YOLO model path unavailable")
+        
+        from config import Config
+        yolo_model_path = Path(Config.DEFAULT_YOLO_MODEL)
+        if not yolo_model_path.exists():
+            raise FileNotFoundError(f"YOLO model not found at configured path: {yolo_model_path}")
+        
+        model = YOLO(str(yolo_model_path))
+        print(f"✅ YOLO model loaded from config path: {yolo_model_path}")
+    except Exception as e:
+        print(f"❌ Failed to load YOLO model: {e}")
+        print("💡 Ensure YOLO model is present at configured path")
+        exit(1)
     
     mpHands = mp.solutions.hands
     media_pipe_dict = {

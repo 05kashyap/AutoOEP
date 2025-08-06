@@ -7,7 +7,21 @@ import torch.optim as optim
 import numpy as np
 import matplotlib.pyplot as plt
 import time
+import os
+import tempfile
+from pathlib import Path
 from sklearn.metrics import roc_curve, roc_auc_score, precision_recall_curve
+
+# Add parent directory to path for imports
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+try:
+    from config import Config
+    CONFIG_LOADED = True
+except ImportError:
+    print("Warning: Could not load config module")
+    CONFIG_LOADED = False
 
 
 class ModelTrainer:
@@ -22,6 +36,11 @@ class ModelTrainer:
             'val_loss': [],
             'val_acc': []
         }
+        
+        # Create temporary directory for model checkpoints
+        self.temp_dir = tempfile.mkdtemp(prefix='proctor_training_')
+        self.best_model_path = os.path.join(self.temp_dir, 'best_model.pth')
+        print(f"Training checkpoints will be saved to: {self.temp_dir}")
     
     def train_epoch(self, train_loader, optimizer, criterion):
         """Train model for one epoch"""
@@ -121,8 +140,8 @@ class ModelTrainer:
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 patience_counter = 0
-                # Save best model
-                torch.save(self.model.state_dict(), 'best_model.pth')
+                # Save best model to temp directory
+                torch.save(self.model.state_dict(), self.best_model_path)
             else:
                 patience_counter += 1
                 if patience_counter >= patience:
@@ -132,8 +151,8 @@ class ModelTrainer:
         total_time = time.time() - start_time
         print(f"\nTraining completed in {total_time:.1f} seconds")
         
-        # Load best model
-        self.model.load_state_dict(torch.load('best_model.pth', weights_only=False))
+        # Load best model from temp directory
+        self.model.load_state_dict(torch.load(self.best_model_path, weights_only=False))
         
         return self.training_history
     
@@ -252,3 +271,17 @@ class ModelSaver:
         scaler.scale_ = checkpoint['scaler_scale']
         
         return model, scaler
+    
+    def cleanup(self):
+        """Clean up temporary training files"""
+        import shutil
+        try:
+            if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
+                shutil.rmtree(self.temp_dir)
+                print(f"Cleaned up training temp directory: {self.temp_dir}")
+        except Exception as e:
+            print(f"Warning: Could not clean up temp directory: {e}")
+    
+    def __del__(self):
+        """Destructor to clean up temp files"""
+        self.cleanup()
