@@ -62,99 +62,9 @@ def setup_cheating_logger():
 def parse_arguments():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Video Proctoring System Test')
-    parser.add_argument('--debug', action='store_true', help='Enable debug features')
-    parser.add_argument('--demo', action='store_true', help='Run camera demo')
-    parser.add_argument('--test-imports', action='store_true', help='Test import functionality')
     parser.add_argument('--process-videos', action='store_true', help='Process video files from Inputs folder')
     parser.add_argument('--no-display', action='store_true', help='Disable video display for faster processing')
     return parser.parse_args()
-
-
-def test_imports():
-    """Test all import functionality"""
-    print("🧪 Testing System Imports")
-    print("=" * 50)
-    
-    # Test core Python libraries
-    try:
-        import cv2
-        print(f"✅ OpenCV: {cv2.__version__}")
-    except ImportError as e:
-        print(f"❌ OpenCV: {e}")
-    except AttributeError:
-        print("✅ OpenCV: Available (version info unavailable)")
-        
-    try:
-        import numpy as np
-        print(f"✅ NumPy: {np.__version__}")
-    except ImportError as e:
-        print(f"❌ NumPy: {e}")
-        
-    try:
-        import mediapipe as mp
-        print(f"✅ MediaPipe: {mp.__version__}")
-    except ImportError as e:
-        print(f"❌ MediaPipe: {e}")
-        
-    try:
-        from ultralytics import YOLO
-        print("✅ YOLO (ultralytics)")
-    except ImportError as e:
-        print(f"❌ YOLO: {e}")
-    
-    # Test our modules
-    print("\n📦 Testing Project Modules:")
-    
-    if CONFIG_LOADED:
-        print("✅ Config module")
-    else:
-        print("❌ Config module")
-    
-    try:
-        from VisionUtils.handpose import inference
-        print("✅ VisionUtils.handpose")
-    except ImportError as e:
-        print(f"❌ VisionUtils.handpose: {e}")
-        
-    try:
-        from VisionUtils.face_inference import get_face_inference
-        print("✅ VisionUtils.face_inference")
-    except ImportError as e:
-        print(f"❌ VisionUtils.face_inference: {e}")
-        
-    try:
-        from Proctor.static_proctor import StaticProctor
-        print("✅ Proctor.StaticProctor")
-    except ImportError as e:
-        print(f"❌ Proctor.StaticProctor: {e}")
-        
-    try:
-        from Proctor.temporal_trainer_enhanced import TemporalTrainerEnhanced
-        print("✅ Proctor.TemporalTrainer")
-    except ImportError as e:
-        print(f"❌ Proctor.TemporalTrainer: {e}")
-
-
-def test_camera():
-    """Test camera functionality"""
-    print("\n📹 Testing Camera Access")
-    print("=" * 30)
-    
-    for cam_id in range(3):  # Test first 3 camera IDs
-        try:
-            cap = cv2.VideoCapture(cam_id)
-            if cap.isOpened():
-                ret, frame = cap.read()
-                if ret:
-                    print(f"✅ Camera {cam_id}: Available ({frame.shape})")
-                else:
-                    print(f"⚠️ Camera {cam_id}: Opens but no frame")
-                cap.release()
-            else:
-                print(f"❌ Camera {cam_id}: Not available")
-        except Exception as e:
-            print(f"❌ Camera {cam_id}: Error - {e}")
-
 
 def process_input_videos():
     """Process video files from the Inputs folder with full proctor functionality"""
@@ -527,47 +437,6 @@ def process_input_videos():
         return False
 
 
-def run_demo():
-    """Run a simple camera demo"""
-    print("\n🎥 Camera Demo")
-    print("Press 'q' to quit")
-    print("=" * 30)
-    
-    try:
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            print("❌ Could not open camera 0")
-            return
-            
-        frame_count = 0
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                print("❌ Failed to read frame")
-                break
-                
-            frame_count += 1
-            
-            # Add overlay text
-            cv2.putText(frame, f"Video Proctoring Demo - Frame {frame_count}", 
-                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            cv2.putText(frame, "Press 'q' to quit", 
-                       (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            
-            cv2.imshow('Video Proctoring Demo', frame)
-            
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
-                break
-                
-        cap.release()
-        cv2.destroyAllWindows()
-        print(f"✅ Demo completed - processed {frame_count} frames")
-        
-    except Exception as e:
-        print(f"❌ Demo failed: {e}")
-
-
 def main():
     """Main function"""
     args = parse_arguments()
@@ -575,14 +444,6 @@ def main():
     print("🎬 Video Proctoring System - Full Functionality Test")
     print("=" * 60)
     
-    if args.test_imports or args.debug:
-        test_imports()
-    
-    if args.debug:
-        test_camera()
-    
-    if args.demo:
-        run_demo()
     
     if args.process_videos:
         print("🎥 Video processing mode enabled")
@@ -593,18 +454,6 @@ def main():
             print("🎉 Video processing completed successfully!")
         else:
             print("❌ Video processing failed!")
-    
-    if not any([args.test_imports, args.debug, args.demo, args.process_videos]):
-        print("📋 Available options:")
-        print("  --debug           : Run debug tests")
-        print("  --demo            : Run camera demo")
-        print("  --test-imports    : Test imports only")
-        print("  --process-videos  : Process videos from Inputs folder")
-        print("  --no-display      : Disable video display (use with --process-videos)")
-        print("\nExample usage:")
-        print("  python main_fixed.py --debug")
-        print("  python main_fixed.py --demo")
-        print("  python main_fixed.py --process-videos --no-display")
     
     print("\n✨ Main execution completed!")
 
