@@ -1,5 +1,12 @@
 """
 Training utilities for temporal models
+
+DEPRECATION NOTICE:
+- This module is retained for legacy reference only.
+- All active training flows have been moved under the Training/ folder.
+- Use:
+    python Training/static_trainer.py
+    python Training/temporal_trainer.py
 """
 import torch
 import torch.nn as nn
@@ -273,15 +280,15 @@ class ModelSaver:
         return model, scaler
     
     def cleanup(self):
-        """Clean up temporary training files"""
-        import shutil
-        try:
-            if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
-                shutil.rmtree(self.temp_dir)
-                print(f"Cleaned up training temp directory: {self.temp_dir}")
-        except Exception as e:
-            print(f"Warning: Could not clean up temp directory: {e}")
+        """No-op: kept for backward compatibility"""
+        return
     
     def __del__(self):
-        """Destructor to clean up temp files"""
-        self.cleanup()
+        """No-op destructor"""
+        return
+
+
+if __name__ == "__main__":
+    print("This module is deprecated. Please run training from the Training/ folder:")
+    print("  python Training/static_trainer.py  # static model")
+    print("  python Training/temporal_trainer.py --data_dir <path>  # temporal model")

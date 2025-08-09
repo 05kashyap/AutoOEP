@@ -202,6 +202,10 @@ class VideoProctor:
                 static_results.get('Cheat Score', 0.0),
                 temporal_score
             )
+            # Ensure compatibility keys for statistics/visualizer
+            combined_results['temporal_prediction'] = temporal_score
+            combined_results['xgboost_prediction'] = combined_results.get('xgboost_prediction', None)
+            combined_results['static_model_prediction'] = combined_results.get('static_model_prediction', None)
             
             # Update statistics
             self.statistics.update_frame_stats(combined_results)
@@ -379,24 +383,28 @@ class VideoProctor:
     def train_temporal_models(self, training_data_dir):
         """
         Training is now handled by separate training script
-        Use train_temporal_models.py or Proctor/temporal_trainer.py for training
+        Use Training/temporal_trainer.py for temporal training
+        and Training/static_trainer.py for static model training
         
         Args:
             training_data_dir: Directory containing training data
         """
-        print("⚠️  Training has been moved to a separate script for better organization!")
-        print("To train temporal models, use one of the following:")
-        print("1. python train_temporal_models.py  # Interactive training script")
-        print("2. python Proctor/temporal_trainer.py --data_dir <path> --model_type LSTM")
-        print(f"3. Training data directory: {training_data_dir}")
+        print("⚠️  Training has been moved to separate scripts for better organization!")
+        print("To train temporal models, run:")
+        print("  python Training/temporal_trainer.py --data_dir <path> --model_type LSTM")
+        print("To train the static model, run:")
+        print("  python Training/static_trainer.py --data <csv> --model-out <pkl> --scaler-out <pkl> --metadata-out <pkl>")
+        print(f"Provided training data directory: {training_data_dir}")
         print("\nThis keeps the VideoProctor focused on inference and real-time processing.")
-        print("After training, models will be automatically loaded by VideoProctor.")
+        print("After training, update Config paths so VideoProctor can load the new models.")
     
     def save_models(self):
         """Model saving is now handled by training scripts"""
         print("⚠️  Model saving has been moved to training scripts!")
-        print("Models are automatically saved during training process.")
-        print("Use the training scripts to create and save new models.")
+        print("Use the scripts under Training/:")
+        print("  - Training/temporal_trainer.py (saves .pth)")
+        print("  - Training/static_trainer.py (saves model/scaler/metadata .pkl)")
+        print("Update config.py to point to the newly saved artifacts.")
     
     def get_session_statistics(self):
         """Get comprehensive session statistics"""
