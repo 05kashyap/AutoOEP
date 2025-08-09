@@ -6,6 +6,27 @@ Statistics utilities for analyzing prediction results
 class StatisticsCalculator:
     """Handles calculation of statistics from prediction results"""
     
+    def __init__(self):
+        """Initialize statistics calculator"""
+        self.frame_stats = []
+        self.session_stats = {}
+    
+    def update_frame_stats(self, frame_results):
+        """Update statistics with new frame results"""
+        self.frame_stats.append(frame_results)
+    
+    def get_comprehensive_stats(self):
+        """Get comprehensive statistics from all processed frames"""
+        if not self.frame_stats:
+            return {}
+        
+        return self.calculate_overall_statistics(self.frame_stats)
+    
+    def reset(self):
+        """Reset all statistics"""
+        self.frame_stats = []
+        self.session_stats = {}
+    
     @staticmethod
     def calculate_overall_statistics(results):
         """Calculate overall statistics from processing results"""

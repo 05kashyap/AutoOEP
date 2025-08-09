@@ -1,8 +1,8 @@
 #!/bin/bash
 python video_proctor.py \
-  --face Dataset_Parser/Media/NoCheat_Videos/Test/front_test.avi \
-  --hand Dataset_Parser/Media/NoCheat_Videos/Test/side_test.avi \
-  --target Dataset_Parser/OEPFrame_Dataset/ID.png \
+  --face Datasets\front_test.avi \
+  --hand Datasets\side_test.avi \
+  --target Datasets\ID.png \
   --output Outputs \
   --lstm-model Models/temporal_proctor_trained_on_processed.pt \
   --static-model Models/lightgbm_cheating_model_20250801_200619.pkl \
@@ -11,5 +11,3 @@ python video_proctor.py \
   --test-duration 5 \
   --yolo-model Models/OEP_YOLOv11n.pt \
   --mediapipe-task Models/face_landmarker.task \
-  --display \
-

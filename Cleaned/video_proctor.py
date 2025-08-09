@@ -20,14 +20,13 @@ from core.model_manager import ModelManager
 from core.debug_validator import DebugValidator
 from core.visualizer import Visualizer
 from core.video_processor import VideoProcessor
-from core.statistics import Statistics
+from core.statistics import StatisticsCalculator
 from core.image_processor import ImageProcessor
 from core.data_handler import DataHandler
-from core.trainer import Trainer
 
 # Proctor component imports
 from Proctor.static_proctor import StaticProctor
-from Proctor.temporal_trainer_enhanced import TemporalTrainerEnhanced
+from Proctor.temporal_proctor import TemporalProctor
 
 # Configuration
 from config import Config
@@ -57,20 +56,24 @@ class VideoProctor:
         self.debug_validator = DebugValidator()
         self.visualizer = Visualizer()
         self.video_processor = VideoProcessor()
-        self.statistics = Statistics()
+        self.statistics = StatisticsCalculator()
         self.image_processor = ImageProcessor()
         self.data_handler = DataHandler()
-        self.trainer = Trainer()
         
         # Initialize proctor components
         self.static_proctor = None
-        self.temporal_trainer = None
+        self.temporal_proctor = None
         
         # Target image for identity verification
         self.target_image = None
-        if target_image_path and os.path.exists(target_image_path):
-            self.target_image = cv2.imread(target_image_path)
-        
+        try:
+            if target_image_path and os.path.exists(target_image_path):
+                self.target_image = cv2.imread(target_image_path)
+            else:
+                print(f"Warning: Target image not found at {target_image_path}")
+        except Exception as e:
+            raise RuntimeError(f"Error loading target image: {e}")
+
         # Setup models
         self._setup_models()
         
@@ -89,16 +92,16 @@ class VideoProctor:
                 Config.DEFAULT_MEDIAPIPE_MODEL
             )
             
-            # Initialize temporal trainer with STRICT requirements
-            print("📦 Initializing enhanced temporal trainer...")
-            self.temporal_trainer = TemporalTrainerEnhanced()
+            # Initialize temporal proctor (inference-only)
+            print("📦 Initializing temporal proctor (inference)...")
+            self.temporal_proctor = TemporalProctor()
             
             # Load pre-trained temporal models - REQUIRED, no fallbacks
             if not os.path.exists(self.model_save_dir):
                 raise FileNotFoundError(f"Model directory is required but not found: {self.model_save_dir}")
             
             print(f"📥 Loading temporal models from: {self.model_save_dir}")
-            self.temporal_trainer.load_models(self.model_save_dir)
+            self.temporal_proctor.load_models(None)  # Use Config path instead of directory
             print("✅ Temporal models loaded successfully")
             
             # Load static models (LightGBM, scaler, metadata) - REQUIRED
@@ -113,8 +116,7 @@ class VideoProctor:
             print(f"   - Static model: {Config.DEFAULT_STATIC_MODEL}")
             print(f"   - MediaPipe model: {Config.DEFAULT_MEDIAPIPE_MODEL}")
             raise RuntimeError(f"Failed to initialize VideoProctor: {e}")
-            raise
-    
+            
     def _setup_yolo_and_mediapipe(self):
         """Setup YOLO and MediaPipe models using model manager"""
         return self.model_manager.load_detection_models()
@@ -153,6 +155,13 @@ class VideoProctor:
             print(f"   - Scaler: {getattr(Config, 'DEFAULT_STATIC_SCALER', 'NOT_CONFIGURED')}")
             print(f"   - Metadata: {getattr(Config, 'DEFAULT_STATIC_METADATA', 'NOT_CONFIGURED')}")
             raise RuntimeError(f"Failed to load required static models: {e}")
+
+    def _safe_float(self, value, default=0.0):
+        """Safely convert a value to float, returning default on failure."""
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
     
     def process_frame_pair(self, face_frame, hand_frame):
         """
@@ -170,19 +179,21 @@ class VideoProctor:
             if not self.debug_validator.validate_frame_pair(face_frame, hand_frame):
                 return {'error': 'Invalid frame pair'}
             
+            # Ensure proctor components are initialized
+            if self.static_proctor is None or self.temporal_proctor is None:
+                raise RuntimeError("Proctor components not initialized")
+            
             # Get target frame (use first face frame if no target image)
             target_frame = self.target_image if self.target_image is not None else face_frame
             
             # Static analysis
-            static_results = self.static_proctor.process_frames(
-                target_frame, face_frame, hand_frame
-            )
-            
+            static_results = self.static_proctor.process_frames(target_frame, face_frame, hand_frame)
+
             # Add to temporal sequence
-            self.temporal_trainer.add_frame_features(static_results)
+            self.temporal_proctor.add_frame_features(static_results)
             
             # Get temporal prediction
-            temporal_score = self.temporal_trainer.get_temporal_prediction()
+            temporal_score = self.temporal_proctor.get_temporal_prediction()
             
             # Combine results
             combined_results = static_results.copy()
@@ -243,7 +254,7 @@ class VideoProctor:
                 raise ValueError("Could not open one or both cameras")
             
             print("Starting video stream processing...")
-            print("Press 'q' to quit, 's' to save current model state")
+            print("Press 'q' to quit, 'r' to reset session, 's' for training info")
             
             while True:
                 # Read frames
@@ -257,27 +268,34 @@ class VideoProctor:
                 # Process frames
                 results = self.process_frame_pair(face_frame, hand_frame)
                 
-                if 'error' not in results:
-                    # Display results if enabled
-                    if display:
-                        annotated_frames = self.visualizer.create_annotated_display(
-                            face_frame, hand_frame, results
-                        )
-                        cv2.imshow('Video Proctoring - Face Camera', annotated_frames[0])
-                        cv2.imshow('Video Proctoring - Hand Camera', annotated_frames[1])
+                if 'error' not in results and display:
+                    # Prepare visualization payload compatible with Visualizer
+                    viz_payload = {
+                        'static_results': results,
+                        'temporal_prediction': results.get('Temporal Score'),
+                        'xgboost_prediction': None,
+                        'static_model_prediction': None,
+                    }
                     
+                    # Create a single combined annotated frame for display
+                    combined_frame = self.visualizer.create_display_frame(
+                        face_frame, hand_frame, viz_payload
+                    )
+                    cv2.imshow('Video Proctoring', combined_frame)
+                
                     # Print key metrics
-                    final_score = results.get('Final Score', 0.0)
-                    if final_score > Config.ALERT_THRESHOLD:
-                        print(f"ALERT: High cheating probability detected: {final_score:.3f}")
+                    final_score_val = self._safe_float(results.get('Final Score', 0.0), 0.0)
+                    if final_score_val > Config.ALERT_THRESHOLD:
+                        print(f"ALERT: High cheating probability detected: {final_score_val:.3f}")
                 
                 # Check for key presses
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):
                     break
+                elif key == ord('r'):
+                    self.reset_session()
                 elif key == ord('s'):
                     self.save_models()
-                    print("Models saved successfully")
             
             # Cleanup
             face_cap.release()
@@ -306,46 +324,92 @@ class VideoProctor:
         Returns:
             List of frame analysis results
         """
-        return self.video_processor.process_video_files(
-            face_video_path, hand_video_path, output_path,
-            process_callback=self.process_frame_pair
-        )
+        results = []
+        
+        # Open video captures
+        face_cap = cv2.VideoCapture(face_video_path)
+        hand_cap = cv2.VideoCapture(hand_video_path)
+        
+        if not face_cap.isOpened():
+            raise ValueError(f"Could not open face video: {face_video_path}")
+        if not hand_cap.isOpened():
+            raise ValueError(f"Could not open hand video: {hand_video_path}")
+        
+        try:
+            frame_count = 0
+            max_frames = min(
+                int(face_cap.get(cv2.CAP_PROP_FRAME_COUNT)),
+                int(hand_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            )
+            
+            print(f"Processing {max_frames} frames...")
+            
+            while True:
+                face_ret, face_frame = face_cap.read()
+                hand_ret, hand_frame = hand_cap.read()
+                
+                if not face_ret or not hand_ret:
+                    break
+                
+                # Process frame pair
+                try:
+                    frame_result = self.process_frame_pair(face_frame, hand_frame)
+                    frame_result['frame_number'] = str(frame_count)
+                    results.append(frame_result)
+                except Exception as e:
+                    results.append({
+                        'frame_number': str(frame_count),
+                        'error': str(e),
+                        'Final Score': 0.0
+                    })
+                
+                frame_count += 1
+                
+                # Progress update
+                if frame_count % 25 == 0:
+                    print(f"  Progress: {frame_count}/{max_frames} frames processed")
+                
+        finally:
+            face_cap.release()
+            hand_cap.release()
+        
+        print(f"✅ Completed processing {len(results)} frames")
+        return results
     
     def train_temporal_models(self, training_data_dir):
         """
-        Train temporal models with labeled data
+        Training is now handled by separate training script
+        Use train_temporal_models.py or Proctor/temporal_trainer.py for training
         
         Args:
             training_data_dir: Directory containing training data
         """
-        # Load training data
-        training_sequences, labels = self.data_handler.load_training_data(training_data_dir)
-        
-        if len(training_sequences) > 0:
-            # Train models
-            self.temporal_trainer.train_models(training_sequences, labels)
-            print(f"Trained models with {len(training_sequences)} sequences")
-        else:
-            print("No training data found")
+        print("⚠️  Training has been moved to a separate script for better organization!")
+        print("To train temporal models, use one of the following:")
+        print("1. python train_temporal_models.py  # Interactive training script")
+        print("2. python Proctor/temporal_trainer.py --data_dir <path> --model_type LSTM")
+        print(f"3. Training data directory: {training_data_dir}")
+        print("\nThis keeps the VideoProctor focused on inference and real-time processing.")
+        print("After training, models will be automatically loaded by VideoProctor.")
     
     def save_models(self):
-        """Save trained temporal models"""
-        try:
-            self.temporal_trainer.save_models(self.model_save_dir)
-            print(f"Models saved to {self.model_save_dir}")
-        except Exception as e:
-            print(f"Error saving models: {e}")
+        """Model saving is now handled by training scripts"""
+        print("⚠️  Model saving has been moved to training scripts!")
+        print("Models are automatically saved during training process.")
+        print("Use the training scripts to create and save new models.")
     
     def get_session_statistics(self):
         """Get comprehensive session statistics"""
         stats = self.statistics.get_comprehensive_stats()
-        temporal_stats = self.temporal_trainer.get_statistics()
-        stats.update(temporal_stats)
+        if self.temporal_proctor is not None:
+            temporal_stats = self.temporal_proctor.get_statistics()
+            stats.update(temporal_stats)
         return stats
     
     def reset_session(self):
         """Reset session data and statistics"""
-        self.temporal_trainer.reset_history()
+        if self.temporal_proctor is not None:
+            self.temporal_proctor.reset_history()
         self.statistics.reset()
         print("Session reset completed")
     

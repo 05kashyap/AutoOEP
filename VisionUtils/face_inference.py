@@ -28,6 +28,7 @@ def verify_id(frame, referenceframe):
         # referenceframe = cv2.imread(r"C:\Users\singl\Desktop\Bhuvanesh\NITK\SEM4\IT255_AI\Project Files\DATASET\bhuv_fac\ID.png")
         referenceframe = cv2.cvtColor(referenceframe, cv2.COLOR_BGR2RGB)
         result = DeepFace.verify(img1_path=frame_new, img2_path=referenceframe, detector_backend='mediapipe', model_name='ArcFace')
+        print(result)
         return result['verified']
     except Exception as e:
         print("Error in DeepFace verification:", e)

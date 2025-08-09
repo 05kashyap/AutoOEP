@@ -195,7 +195,7 @@ class FaceDetails():
             z = self.face_landmarks[idx].z
 
             face_2d.append([x, y])
-            face_3d.append([x, y, z * 3000] if idx == 1 else [x, y, z])
+            face_3d.append([x, y, z])
 
             # Capture nose coordinates specifically
             if idx == 1:

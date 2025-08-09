@@ -1,6 +1,7 @@
 """
-Main entry point for the refactored video proctor application with full functionality
+Main entry point for the video proctor application - Uses VideoProctor class
 """
+import os
 import sys
 import argparse
 import cv2
@@ -19,22 +20,26 @@ except Exception as e:
     print(f"Warning: Could not load config: {e}")
     CONFIG_LOADED = False
 
+# Import the main VideoProctor class
+try:
+    from video_proctor import VideoProctor, create_video_proctor
+    VIDEOPROCTOR_LOADED = True
+except Exception as e:
+    print(f"❌ Could not import VideoProctor: {e}")
+    VIDEOPROCTOR_LOADED = False
+
 
 def setup_cheating_logger():
-    """Setup logging for cheating detection events"""
-    # Create logs directory if it doesn't exist
-    logs_dir = Path("logs")
-    logs_dir.mkdir(exist_ok=True)
-    
-    # Create log filename with timestamp
+    """Setup logger for cheating detection events"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = logs_dir / f"cheating_detection_{timestamp}.log"
+    os.makedirs("logs", exist_ok=True)  # Ensure logs directory exists
+    log_file = f"logs/cheating_detection_{timestamp}.log"
     
-    # Setup logger
-    logger = logging.getLogger('cheating_detector')
+    # Create logger
+    logger = logging.getLogger('cheating_detection')
     logger.setLevel(logging.INFO)
     
-    # Remove existing handlers to avoid duplicates
+    # Clear any existing handlers
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
     
@@ -42,33 +47,32 @@ def setup_cheating_logger():
     file_handler = logging.FileHandler(log_file)
     file_handler.setLevel(logging.INFO)
     
-    # Create console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    
     # Create formatter
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     file_handler.setFormatter(formatter)
-    console_handler.setFormatter(formatter)
     
-    # Add handlers to logger
+    # Add handler to logger
     logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
     
     return logger, log_file
 
 
 def parse_arguments():
     """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description='Video Proctoring System Test')
+    parser = argparse.ArgumentParser(description='Video Proctoring System')
     parser.add_argument('--process-videos', action='store_true', help='Process video files from Inputs folder')
     parser.add_argument('--no-display', action='store_true', help='Disable video display for faster processing')
     return parser.parse_args()
 
+
 def process_input_videos():
-    """Process video files from the Inputs folder with full proctor functionality"""
-    print("\n🎬 Processing Input Videos with Full Proctor Analysis")
+    """Process video files using VideoProctor class"""
+    print("\n🎬 Processing Input Videos with VideoProctor")
     print("=" * 60)
+    
+    if not VIDEOPROCTOR_LOADED:
+        print("❌ VideoProctor not available - cannot process videos")
+        return False
     
     # Setup cheating detection logger
     cheat_logger, log_file = setup_cheating_logger()
@@ -96,302 +100,103 @@ def process_input_videos():
         return False
     
     try:
-        # Import the full proctor components
-        print("\n📦 Importing proctor components...")
-        from Proctor.static_proctor import StaticProctor
-        from Proctor.temporal_trainer_enhanced import TemporalTrainerEnhanced
-        from ultralytics import YOLO
-        import mediapipe as mp
-        import numpy as np
-        print("✅ All components imported successfully")
+        # Initialize VideoProctor with target image
+        print("\n🤖 Initializing VideoProctor...")
+        if not VIDEOPROCTOR_LOADED:
+            raise RuntimeError("VideoProctor module not available")
         
-        # Load target image
-        target_frame = cv2.imread(str(target_image))
-        if target_frame is None:
-            print(f"❌ Could not load target image: {target_image}")
-            return False
-        print(f"✅ Target image loaded: {target_frame.shape}")
+        # Import here to ensure it's available
+        from video_proctor import create_video_proctor
         
-        # Initialize YOLO model with strict Config path
-        print("\n🤖 Initializing AI models...")
-        yolo_model = None
-        try:
-            # STRICT: Use config path and fail if not available
-            if not CONFIG_LOADED:
-                raise RuntimeError("Config module not loaded - YOLO model path unavailable")
-            
-            # Import Config here to avoid unbound variable issues
-            from config import Config
-            
-            if not hasattr(Config, 'DEFAULT_YOLO_MODEL'):
-                raise RuntimeError("DEFAULT_YOLO_MODEL not configured in config.py")
-                
-            yolo_model_path = Path(Config.DEFAULT_YOLO_MODEL)
-            if not yolo_model_path.exists():
-                raise FileNotFoundError(f"YOLO model not found at configured path: {yolo_model_path}")
-            
-            print(f"✅ YOLO model found at configured path: {yolo_model_path}")
-            yolo_model = YOLO(str(yolo_model_path))
-            print("✅ YOLO model loaded successfully")
-            
-        except Exception as e:
-            print(f"❌ YOLO model setup failed: {e}")
-            print("💡 Required: YOLO model must be present at configured path")
-            
-            # Try to get the expected path for error message
-            try:
-                from config import Config
-                expected_path = Config.DEFAULT_YOLO_MODEL
-            except:
-                expected_path = 'Config not loaded'
-            print(f"   Expected path: {expected_path}")
-            yolo_model = None
+        video_proctor = create_video_proctor(
+            target_image_path=str(target_image),
+            debug_mode=True
+        )
+        print("✅ VideoProctor initialized successfully")
         
-        # Initialize MediaPipe
-        media_pipe_dict = None
-        try:
-            # Check for MediaPipe API structure
-            if hasattr(mp, 'solutions') and hasattr(mp.solutions, 'hands') and hasattr(mp.solutions, 'drawing_utils'):
-                mp_hands = mp.solutions.hands
-                hands = mp_hands.Hands(
-                    static_image_mode=False,
-                    max_num_hands=2,
-                    min_detection_confidence=0.5,
-                    min_tracking_confidence=0.5
-                )
-                mp_drawing = mp.solutions.drawing_utils
-                media_pipe_dict = {
-                    'mpHands': mp_hands,
-                    'hands': hands,
-                    'mpdraw': mp_drawing
-                }
-                print("✅ MediaPipe initialized successfully (solutions API)")
-            else:
-                print("⚠️ MediaPipe solutions API not available - continuing without MediaPipe")
-                media_pipe_dict = None
-        except Exception as e:
-            print(f"⚠️ MediaPipe initialization failed: {e}")
-            media_pipe_dict = None
+        # Process video files using VideoProctor
+        print(f"\n🎬 Processing videos with VideoProctor...")
+        print(f"  - Face camera: {face_video}")
+        print(f"  - Hand camera: {hand_video}")
         
-        # Initialize MediaPipe Face Landmarker with strict Config path
-        face_landmarker_path = None
-        try:
-            # STRICT: Use config path and fail if not available
-            if not CONFIG_LOADED:
-                raise RuntimeError("Config module not loaded - MediaPipe model path unavailable")
-            
-            # Import Config here to avoid unbound variable issues
-            from config import Config
-            
-            if not hasattr(Config, 'DEFAULT_MEDIAPIPE_MODEL'):
-                raise RuntimeError("DEFAULT_MEDIAPIPE_MODEL not configured in config.py")
-                
-            face_landmarker_path = Path(Config.DEFAULT_MEDIAPIPE_MODEL)
-            if not face_landmarker_path.exists():
-                raise FileNotFoundError(f"MediaPipe face landmarker model not found at configured path: {face_landmarker_path}")
-            
-            print(f"✅ MediaPipe face landmarker model found at: {face_landmarker_path}")
-            
-        except Exception as e:
-            print(f"❌ MediaPipe face landmarker setup failed: {e}")
-            print("💡 Required: MediaPipe face landmarker model must be present at configured path")
-            
-            # Try to get the expected path for error message
-            try:
-                from config import Config
-                expected_path = Config.DEFAULT_MEDIAPIPE_MODEL
-            except:
-                expected_path = 'Config not loaded'
-            print(f"   Expected path: {expected_path}")
-            face_landmarker_path = None
+        # Use VideoProctor's video file processing method
+        results = video_proctor.process_video_files(
+            face_video_path=str(face_video),
+            hand_video_path=str(hand_video)
+        )
         
-        # Initialize Static Proctor
-        print("\n🔍 Initializing Static Proctor...")
-        static_proctor = None
-        if yolo_model and face_landmarker_path:
-            try:
-                # Initialize with required components - all must be present
-                static_proctor = StaticProctor(yolo_model, media_pipe_dict, str(face_landmarker_path))
-                print("✅ Static Proctor initialized successfully")
-            except Exception as e:
-                print(f"❌ Static Proctor initialization failed: {e}")
-                static_proctor = None
-        else:
-            missing_components = []
-            if not yolo_model:
-                missing_components.append("YOLO model")
-            if not face_landmarker_path:
-                missing_components.append("MediaPipe face landmarker")
-            print("💡 All required model files must be present for proctor functionality")
-            raise RuntimeError(f"Static Proctor skipped due to missing components: {', '.join(missing_components)}")
-        
-        # Initialize Temporal Trainer
-        print("\n⏱️ Initializing Temporal Trainer...")
-        temporal_trainer = None
-        try:
-            temporal_trainer = TemporalTrainerEnhanced(window_size=15)
-            print("✅ Temporal Trainer initialized successfully")
-        except Exception as e:
-            temporal_trainer = None
-            raise RuntimeError(f"Temporal Trainer initialization failed: {e}")
-        
-        # Open video files
-        print("\n📹 Opening video files...")
-        face_cap = cv2.VideoCapture(str(face_video))
-        hand_cap = cv2.VideoCapture(str(hand_video))
-        
-        if not face_cap.isOpened():
-            print(f"❌ Could not open face video: {face_video}")
-            return False
-            
-        if not hand_cap.isOpened():
-            print(f"❌ Could not open hand video: {hand_video}")
-            face_cap.release()
-            return False
-        
-        # Get video properties
-        face_fps = face_cap.get(cv2.CAP_PROP_FPS)
-        hand_fps = hand_cap.get(cv2.CAP_PROP_FPS)
-        face_frames = int(face_cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        hand_frames = int(hand_cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        
-        print(f"📊 Face video: {face_frames} frames @ {face_fps:.1f} FPS")
-        print(f"📊 Hand video: {hand_frames} frames @ {hand_fps:.1f} FPS")
-        
-        # Process frames with full proctor analysis
-        frame_count = 0
-        max_frames = min(face_frames, hand_frames, 300)  # Process up to 300 frames for testing
-        
-        print(f"🎯 Processing {max_frames} frames with proctor analysis...")
-        
+        # Process results and log cheating detections
+        total_cheat_count = 0
         cheating_detections = []
-        temporal_features = []
-        total_cheat_count = 0  # Counter for total cheating instances
         
-        cheat_logger.info(f"Starting analysis of {max_frames} frames")
-        cheat_logger.info(f"Face video: {face_frames} frames @ {face_fps:.1f} FPS")
-        cheat_logger.info(f"Hand video: {hand_frames} frames @ {hand_fps:.1f} FPS")
+        cheat_logger.info(f"Starting analysis of {len(results)} frames")
         
-        while frame_count < max_frames:
-            face_ret, face_frame = face_cap.read()
-            hand_ret, hand_frame = hand_cap.read()
+        for frame_idx, result in enumerate(results):
+            if 'error' in result:
+                print(f"  ⚠️ Frame {frame_idx} processing error: {result['error']}")
+                continue
             
-            if not face_ret or not hand_ret:
-                break
+            final_score = result.get('Final Score', 0.0)
             
-            frame_count += 1
-            
-            # Progress update every 25 frames
-            if frame_count % 25 == 0:
-                print(f"  📹 Processed {frame_count}/{max_frames} frames...")
-            
+            # Use configurable threshold
             try:
-                # Static proctor analysis
-                static_result = None
-                if static_proctor:
-                    try:
-                        static_result = static_proctor.process_frames(target_frame, face_frame, hand_frame)
-                        cheat_score = static_result.get('Cheat Score', 0) if static_result else 0
-                        
-                        # Use configurable threshold
-                        try:
-                            from config import Config
-                            cheat_threshold = Config.CHEATING_THRESHOLD if CONFIG_LOADED else 0.5
-                        except:
-                            cheat_threshold = 0.5
-                        
-                        if cheat_score > cheat_threshold:  # Cheating detected!
-                            total_cheat_count += 1
-                            timestamp_str = f"{frame_count / face_fps:.2f}s" if face_fps > 0 else f"frame_{frame_count}"
-                            
-                            # Real-time cheating alert
-                            print(f"  🚨 CHEAT DETECTED #{total_cheat_count} at {timestamp_str} (Score: {cheat_score:.2f})")
-                            
-                            # Log to file with detailed information
-                            cheat_details = []
-                            if static_result.get('H-Hand Detected'):
-                                cheat_details.append("Hand in hand camera")
-                            if static_result.get('F-Hand Detected'):
-                                cheat_details.append("Hand in face camera")
-                            if static_result.get('H-Prohibited Item'):
-                                cheat_details.append("Prohibited item in hand camera")
-                            if static_result.get('F-Prohibited Item'):
-                                cheat_details.append("Prohibited item in face camera")
-                            if not static_result.get('verification_result', True):
-                                cheat_details.append("Identity verification failed")
-                            
-                            details_str = ", ".join(cheat_details) if cheat_details else "General suspicious behavior"
-                            
-                            cheat_logger.warning(f"CHEAT #{total_cheat_count} - Frame {frame_count} ({timestamp_str}) - Score: {cheat_score:.2f} - Details: {details_str}")
-                            
-                            cheating_detections.append({
-                                'frame': frame_count,
-                                'timestamp': frame_count / face_fps if face_fps > 0 else frame_count,
-                                'type': 'static',
-                                'details': static_result,
-                                'cheat_number': total_cheat_count,
-                                'cheat_score': cheat_score
-                            })
-                    except Exception as e:
-                        if frame_count % 50 == 0:  # Only print occasionally to avoid spam
-                            print(f"    ⚠️ Static proctor error on frame {frame_count}: {e}")
+                from config import Config
+                cheat_threshold = Config.CHEATING_THRESHOLD if CONFIG_LOADED else 0.5
+            except:
+                cheat_threshold = 0.5
+            
+            if final_score > cheat_threshold:  # Cheating detected!
+                total_cheat_count += 1
+                timestamp_str = f"frame_{frame_idx}"
                 
-                # Temporal trainer analysis
-                if temporal_trainer and static_result:
-                    try:
-                        # Add frame features to temporal sequence
-                        temporal_trainer.add_frame_features(static_result)
-                        
-                        # Get temporal prediction if we have enough frames
-                        temporal_score = temporal_trainer.get_temporal_prediction()
-                        
-                        # Create temporal result record
-                        temporal_result = {
-                            'frame': frame_count,
-                            'temporal_score': temporal_score,
-                            'sequence_length': len(temporal_trainer.feature_history)
-                        }
-                        temporal_features.append(temporal_result)
-                        
-                        # Log significant temporal patterns
-                        if temporal_score > 0.7:
-                            cheat_logger.info(f"High temporal risk at frame {frame_count}: {temporal_score:.2f}")
-                            
-                    except Exception as e:
-                        if frame_count % 50 == 0:
-                            print(f"    ⚠️ Temporal trainer error on frame {frame_count}: {e}")
+                # Real-time cheating alert
+                print(f"  🚨 CHEAT DETECTED #{total_cheat_count} at {timestamp_str} (Score: {final_score:.2f})")
                 
-            except Exception as e:
-                if frame_count % 50 == 0:
-                    print(f"    ⚠️ Frame processing error on frame {frame_count}: {e}")
-        
-        # Cleanup
-        face_cap.release()
-        hand_cap.release()
+                # Log to file with detailed information
+                cheat_details = []
+                if result.get('H-Hand Detected'):
+                    cheat_details.append("Hand in hand camera")
+                if result.get('F-Hand Detected'):
+                    cheat_details.append("Hand in face camera")
+                if result.get('H-Prohibited Item'):
+                    cheat_details.append("Prohibited item in hand camera")
+                if result.get('F-Prohibited Item'):
+                    cheat_details.append("Prohibited item in face camera")
+                if not result.get('verification_result', True):
+                    cheat_details.append("Identity verification failed")
+                
+                details_str = ", ".join(cheat_details) if cheat_details else "General suspicious behavior"
+                
+                cheat_logger.warning(f"CHEAT #{total_cheat_count} - Frame {frame_idx} ({timestamp_str}) - Score: {final_score:.2f} - Details: {details_str}")
+                
+                cheating_detections.append({
+                    'frame': frame_idx,
+                    'type': 'combined',
+                    'details': result,
+                    'cheat_number': total_cheat_count,
+                    'final_score': final_score
+                })
         
         # Results summary
-        print(f"\n✅ Processing completed!")
+        print(f"\n✅ VideoProctor processing completed!")
         print(f"📈 Analysis Results:")
-        print(f"  - Total frames processed: {frame_count}")
-        print(f"  - Video duration: {frame_count / face_fps if face_fps > 0 else 0:.1f} seconds")
+        print(f"  - Total frames processed: {len(results)}")
         print(f"  - 🚨 TOTAL CHEATING INSTANCES: {total_cheat_count}")
-        print(f"  - Static cheating detections: {len(cheating_detections)}")
-        print(f"  - Temporal features extracted: {len(temporal_features)}")
+        print(f"  - Cheating detections: {len(cheating_detections)}")
         
-        # Show temporal analysis summary if available
-        if temporal_features:
-            avg_temporal_score = sum(t.get('temporal_score', 0) for t in temporal_features) / len(temporal_features)
-            high_temporal_risk = sum(1 for t in temporal_features if t.get('temporal_score', 0) > 0.7)
-            print(f"  - Average temporal risk score: {avg_temporal_score:.2f}")
-            print(f"  - High temporal risk frames: {high_temporal_risk}")
-            cheat_logger.info(f"Temporal analysis: {len(temporal_features)} frames, avg score: {avg_temporal_score:.2f}")
+        # Get session statistics from VideoProctor
+        stats = video_proctor.get_session_statistics()
+        if stats:
+            print(f"  - Session statistics:")
+            for key, value in stats.items():
+                if isinstance(value, (int, float)):
+                    print(f"    - {key}: {value}")
         
         # Log final summary
         cheat_logger.info(f"=== ANALYSIS COMPLETED ===")
-        cheat_logger.info(f"Total frames processed: {frame_count}")
-        cheat_logger.info(f"Video duration: {frame_count / face_fps if face_fps > 0 else 0:.1f} seconds")
+        cheat_logger.info(f"Total frames processed: {len(results)}")
         cheat_logger.info(f"TOTAL CHEATING INSTANCES: {total_cheat_count}")
-        cheat_logger.info(f"Cheating detection rate: {total_cheat_count/frame_count*100:.1f}%" if frame_count > 0 else "No frames processed")
+        cheat_logger.info(f"Cheating detection rate: {total_cheat_count/len(results)*100:.1f}%" if len(results) > 0 else "No frames processed")
         
         if cheating_detections:
             print(f"\n🚨 Cheating Detection Summary:")
@@ -409,7 +214,7 @@ def process_input_videos():
                     cheat_info.append("Identity-Fail")
                 
                 info_str = ", ".join(cheat_info) if cheat_info else "General"
-                print(f"    ⚠️ CHEAT #{detection.get('cheat_number', i+1)}: Frame {detection['frame']} ({detection['timestamp']:.1f}s) - {info_str}")
+                print(f"    ⚠️ CHEAT #{detection.get('cheat_number', i+1)}: Frame {detection['frame']} - {info_str}")
                 
             if len(cheating_detections) > 10:
                 print(f"    ... and {len(cheating_detections) - 10} more detections")
@@ -421,16 +226,12 @@ def process_input_videos():
         # Final log entry
         cheat_logger.info("=== CHEATING DETECTION SESSION ENDED ===")
         print(f"📝 Complete log saved to: {log_file}")
-        
-        if static_proctor:
-            print(f"✅ Full proctor analysis completed successfully!")
-        else:
-            print(f"⚠️ Basic analysis completed (limited due to missing models)")
+        print(f"✅ VideoProctor analysis completed successfully!")
         
         return True
         
     except Exception as e:
-        print(f"❌ Video processing failed: {e}")
+        print(f"❌ VideoProctor processing failed: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -440,9 +241,8 @@ def main():
     """Main function"""
     args = parse_arguments()
     
-    print("🎬 Video Proctoring System - Full Functionality Test")
+    print("🎬 Video Proctoring System - VideoProctor Integration")
     print("=" * 60)
-    
     
     if args.process_videos:
         print("🎥 Video processing mode enabled")
@@ -450,12 +250,19 @@ def main():
             print("📺 Display disabled for faster processing")
         success = process_input_videos()
         if success:
-            print("🎉 Video processing completed successfully!")
+            print("\n✅ Video processing completed successfully!")
         else:
-            print("❌ Video processing failed!")
+            print("\n❌ Video processing failed!")
+            return 1
+    else:
+        print("📋 Available options:")
+        print("  --process-videos : Process videos from Inputs folder")
+        print("  --no-display     : Disable video display for faster processing")
+        print("\nExample: python main.py --process-videos")
     
-    print("\n✨ Main execution completed!")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    exit_code = main()
+    sys.exit(exit_code)

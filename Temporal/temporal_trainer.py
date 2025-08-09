@@ -601,7 +601,7 @@ class TemporalProctor:
 
     def load_model(self, path='Models/temporal_proctor_model.pt', input_size=None):
         """Load a saved model and scaler"""
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
         self.window_size = checkpoint.get('window_size', self.window_size)
         self.model_type = checkpoint.get('model_type', self.model_type)
         

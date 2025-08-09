@@ -7,6 +7,20 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 
+class DataHandler:
+    """Handles data loading and processing for video proctoring system"""
+    
+    def __init__(self):
+        """Initialize data handler"""
+        pass
+    
+    def load_training_data(self, training_data_dir):
+        """Load training data from directory (placeholder implementation)"""
+        # This is a placeholder - in a real implementation, this would load actual training data
+        # For now, return empty data to avoid import errors
+        return [], []
+
+
 class CustomScaler:
     """Simple scaler that standardizes features"""
     
