@@ -198,10 +198,6 @@ class VideoProctor:
             # Combine results
             combined_results = static_results.copy()
             combined_results['Temporal Score'] = temporal_score
-            combined_results['Final Score'] = self._calculate_final_score(
-                static_results.get('Cheat Score', 0.0),
-                temporal_score
-            )
             # Ensure compatibility keys for statistics/visualizer
             combined_results['temporal_prediction'] = temporal_score
             combined_results['xgboost_prediction'] = combined_results.get('xgboost_prediction', None)
@@ -220,25 +216,6 @@ class VideoProctor:
             error_msg = f"Error processing frame pair: {e}"
             print(error_msg)
             return {'error': error_msg}
-    
-    def _calculate_final_score(self, static_score, temporal_score):
-        """
-        Calculate final cheating probability score
-        
-        Args:
-            static_score: Score from static frame analysis
-            temporal_score: Score from temporal sequence analysis
-            
-        Returns:
-            Combined final score (0-1)
-        """
-        # Weighted combination
-        final_score = (
-            Config.STATIC_WEIGHT * static_score + 
-            Config.TEMPORAL_WEIGHT * temporal_score
-        )
-        
-        return min(final_score, 1.0)  # Cap at 1.0
     
     def process_video_stream(self, face_camera_id=0, hand_camera_id=1, display=True):
         """
@@ -287,10 +264,11 @@ class VideoProctor:
                     )
                     cv2.imshow('Video Proctoring', combined_frame)
                 
-                    # Print key metrics
-                    final_score_val = self._safe_float(results.get('Final Score', 0.0), 0.0)
-                    if final_score_val > Config.ALERT_THRESHOLD:
-                        print(f"ALERT: High cheating probability detected: {final_score_val:.3f}")
+                    # Print key metrics (separate scores)
+                    static_score_val = self._safe_float(results.get('Cheat Score', 0.0), 0.0)
+                    temporal_score_val = self._safe_float(results.get('Temporal Score', 0.0), 0.0)
+                    if static_score_val > Config.ALERT_THRESHOLD or temporal_score_val > Config.ALERT_THRESHOLD:
+                        print(f"ALERT: High probability detected - Static: {static_score_val:.3f}, Temporal: {temporal_score_val:.3f}")
                 
                 # Check for key presses
                 key = cv2.waitKey(1) & 0xFF
@@ -364,7 +342,8 @@ class VideoProctor:
                     results.append({
                         'frame_number': str(frame_count),
                         'error': str(e),
-                        'Final Score': 0.0
+                        'Cheat Score': 0.0,
+                        'Temporal Score': 0.0
                     })
                 
                 frame_count += 1

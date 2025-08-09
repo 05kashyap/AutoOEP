@@ -136,7 +136,15 @@ def process_input_videos():
                 print(f"  ⚠️ Frame {frame_idx} processing error: {result['error']}")
                 continue
             
-            final_score = result.get('Final Score', 0.0)
+            # Separate scores
+            try:
+                static_score = float(result.get('Cheat Score', 0.0) or 0.0)
+            except (TypeError, ValueError):
+                static_score = 0.0
+            try:
+                temporal_score = float(result.get('Temporal Score', 0.0) or 0.0)
+            except (TypeError, ValueError):
+                temporal_score = 0.0
             
             # Use configurable threshold
             try:
@@ -145,12 +153,12 @@ def process_input_videos():
             except:
                 cheat_threshold = 0.5
             
-            if final_score > cheat_threshold:  # Cheating detected!
+            if static_score > cheat_threshold or temporal_score > cheat_threshold:  # Cheating detected!
                 total_cheat_count += 1
                 timestamp_str = f"frame_{frame_idx}"
                 
                 # Real-time cheating alert
-                print(f"  🚨 CHEAT DETECTED #{total_cheat_count} at {timestamp_str} (Score: {final_score:.2f})")
+                print(f"  🚨 CHEAT DETECTED #{total_cheat_count} at {timestamp_str} (Static: {static_score:.2f}, Temporal: {temporal_score:.2f})")
                 
                 # Log to file with detailed information
                 cheat_details = []
@@ -167,14 +175,18 @@ def process_input_videos():
                 
                 details_str = ", ".join(cheat_details) if cheat_details else "General suspicious behavior"
                 
-                cheat_logger.warning(f"CHEAT #{total_cheat_count} - Frame {frame_idx} ({timestamp_str}) - Score: {final_score:.2f} - Details: {details_str}")
+                cheat_logger.warning(
+                    f"CHEAT #{total_cheat_count} - Frame {frame_idx} ({timestamp_str}) - "
+                    f"Static: {static_score:.2f}, Temporal: {temporal_score:.2f} - Details: {details_str}"
+                )
                 
                 cheating_detections.append({
                     'frame': frame_idx,
                     'type': 'combined',
                     'details': result,
                     'cheat_number': total_cheat_count,
-                    'final_score': final_score
+                    'static_score': static_score,
+                    'temporal_score': temporal_score
                 })
         
         # Results summary
