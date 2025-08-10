@@ -28,7 +28,8 @@ class VideoProctor:
         print(f"Using device: {self.device}")
         self.debug_features = debug_features
         self.log_features = debug_features  # Enable feature logging
-
+        print("Window size:", window_size)
+        print("Buffer size:", buffer_size)
         if debug_features:
             print("🐛 DEBUG MODE: Feature verification enabled")
             # Don't call verify_feature_consistency here - we don't have features yet
@@ -823,8 +824,8 @@ def parse_arguments():
     parser.add_argument('--yolo-model', type=str, default='Models/OEP_YOLOv11n.pt', help='Path to YOLO model')
     parser.add_argument('--mediapipe-task', type=str, required=True, help='Path to mediapipe face_landmarker.task')
     parser.add_argument('--input-size', type=int, default=23, help='Number of features for LSTM input')
-    parser.add_argument('--window-size', type=int, default=15, help='Window size for temporal analysis')
-    parser.add_argument('--buffer-size', type=int, default=30, help='Size of feature buffer')
+    parser.add_argument('--window-size', type=int, default=150, help='Window size for temporal analysis')
+    parser.add_argument('--buffer-size', type=int, default=300, help='Size of feature buffer')
     parser.add_argument('--display', action='store_true', help='Display processed video')
     parser.add_argument('--test-duration', type=int, default=None, 
                         help='Duration (in seconds) to process for testing')
