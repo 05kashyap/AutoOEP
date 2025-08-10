@@ -1,3 +1,5 @@
+from collections import defaultdict, deque
+import time
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -22,18 +24,95 @@ face_attributes = [
 
 # model_path = r"C:\Users\singl\Desktop\Bhuvanesh\NITK\SEM4\IT255_AI\Project Files\Face New\face_landmarker.task"
 
-def verify_id(frame, referenceframe):
-    try:
-        frame_new = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        # referenceframe = cv2.imread(r"C:\Users\singl\Desktop\Bhuvanesh\NITK\SEM4\IT255_AI\Project Files\DATASET\bhuv_fac\ID.png")
-        referenceframe = cv2.cvtColor(referenceframe, cv2.COLOR_BGR2RGB)
-        result = DeepFace.verify(img1_path=frame_new, img2_path=referenceframe, detector_backend='mediapipe', model_name='ArcFace')
-        print(result)
-        return result['verified']
-    except Exception as e:
-        print("Error in DeepFace verification:", e)
-        return False
+# def verify_id(frame, referenceframe):
+#     try:
+#         frame_new = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+#         # referenceframe = cv2.imread(r"C:\Users\singl\Desktop\Bhuvanesh\NITK\SEM4\IT255_AI\Project Files\DATASET\bhuv_fac\ID.png")
+#         referenceframe = cv2.cvtColor(referenceframe, cv2.COLOR_BGR2RGB)
+#         result = DeepFace.verify(img1_path=frame_new, img2_path=referenceframe, detector_backend='mediapipe', model_name='ArcFace')
+#         print(result)
+#         return result['verified']
+#     except Exception as e:
+#         print("Error in DeepFace verification:", e)
+#         return False
+all_backends = ["retinaface", "mediapipe", "opencv"]
+primary_backend = all_backends[0]  # Start with retinaface
 
+# Track recent history & performance
+success_count = defaultdict(int)
+attempt_count = defaultdict(int)
+avg_time = defaultdict(float)
+history = {b: deque(maxlen=50) for b in all_backends}
+
+# Preload models once (important for CPU performance)
+
+def try_verification(frame, referenceframe, backend):
+    """Try verification with given backend; returns (success_flag, result_dict_or_None)."""
+    attempt_count[backend] += 1
+    start = time.time()
+    try:
+        result = DeepFace.verify(
+            img1_path=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
+            img2_path=cv2.cvtColor(referenceframe, cv2.COLOR_BGR2RGB),
+            detector_backend=backend,
+            model_name='ArcFace'
+        )
+        elapsed = (time.time() - start) * 1000
+        avg_time[backend] = 0.9 * avg_time[backend] + 0.1 * elapsed
+        if result.get('verified', False):
+            success_count[backend] += 1
+            history[backend].append(1)
+            return True, result
+    except Exception:
+        pass
+    history[backend].append(0)
+    return False, None
+
+def choose_primary():
+    """Pick the best backend based on last N frames' success rate & time."""
+    rates = {}
+    for b in all_backends:
+        if history[b]:
+            rates[b] = (sum(history[b]) / len(history[b]), avg_time[b] or 9999)
+    if not rates:
+        return primary_backend
+    # Sort: highest success rate, then lowest avg time
+    return sorted(rates.items(), key=lambda x: (-x[1][0], x[1][1]))[0][0]
+
+def verify_id(frame, referenceframe, frame_num=None):
+    global primary_backend
+    try:
+        # Validate frames
+        if (frame is None or referenceframe is None or
+            not hasattr(frame, 'shape') or not hasattr(referenceframe, 'shape') or
+            len(frame.shape) != 3 or len(referenceframe.shape) != 3):
+            return False
+        
+        # Try primary backend
+        success, result = try_verification(frame, referenceframe, primary_backend)
+
+        # If primary fails → try the other backend
+        if not success:
+            for fb in [b for b in all_backends if b != primary_backend]:
+                success, result = try_verification(frame, referenceframe, fb)
+                if success:
+                    primary_backend = fb  # switch immediately for next call
+                    print(f"[INFO] Switched primary to {fb}")
+                    break
+        
+        # Periodic backend reassessment (optional if called many times)
+        if frame_num is not None and frame_num % 50 == 0:
+            new_primary = choose_primary()
+            if new_primary != primary_backend:
+                print(f"[INFO] Changing primary from {primary_backend} → {new_primary}")
+                primary_backend = new_primary
+
+        if result:
+            print(f"Verification result: {result}")
+        return success
+    except Exception as e:
+        print(f"Error during verification: {e}")
+        return False
 def get_landmark_details(result, input_image: mp.Image, timestamp_ms: int):
     face_details = FaceDetails(result, input_image.numpy_view())
     details = {attr: getattr(face_details, attr) for attr in face_attributes}
