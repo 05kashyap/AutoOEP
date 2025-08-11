@@ -175,6 +175,9 @@ class TemporalProctor:
         # Keep track of feature order and threshold picked on validation
         self.feature_cols = None
         self.best_threshold = 0.5
+        # Store tuned hparams and search score when using hyperparameter search
+        self.hparams = None
+        self.search_score = None
         
     def load_data(self, csv_path):
         """Load and preprocess the dataset"""
@@ -680,7 +683,9 @@ class TemporalProctor:
                 'scaler_scale': self.scaler.scale_,
                 'feature_cols': self.feature_cols,
                 'step': self.step,
-                'best_threshold': self.best_threshold
+                'best_threshold': self.best_threshold,
+                'hparams': self.hparams,
+                'search_score': self.search_score
             }, path)
             print(f"Model and scaler saved to {path}")
         else:
@@ -694,6 +699,8 @@ class TemporalProctor:
         self.feature_cols = checkpoint.get('feature_cols', self.feature_cols)
         self.step = checkpoint.get('step', self.step)
         self.best_threshold = checkpoint.get('best_threshold', self.best_threshold)
+        self.hparams = checkpoint.get('hparams', None)
+        self.search_score = checkpoint.get('search_score', None)
         
         # Load scaler parameters
         if 'scaler_mean' in checkpoint and 'scaler_scale' in checkpoint:
@@ -740,29 +747,56 @@ class TemporalProctor:
         # 3. ROC Curve
         plt.subplot(2, 3, 3)
         if y_true is not None and y_pred_proba is not None:
-            fpr, tpr, _ = roc_curve(y_true, y_pred_proba)
-            auc_score = roc_auc_score(y_true, y_pred_proba)
-            plt.plot(fpr, tpr, label=f'ROC Curve (AUC = {auc_score:.3f})')
-            plt.plot([0, 1], [0, 1], 'k--', label='Random')
-            plt.xlabel('False Positive Rate')
-            plt.ylabel('True Positive Rate')
-            plt.title('ROC Curve')
-            plt.legend()
+            try:
+                y_true_flat = np.array(y_true).flatten()
+                # ROC AUC is undefined if only one class is present
+                if np.unique(y_true_flat).size < 2:
+                    plt.plot([0, 1], [0, 1], 'k--', label='Random')
+                    plt.xlabel('False Positive Rate')
+                    plt.ylabel('True Positive Rate')
+                    plt.title('ROC Curve (skipped: single-class y_true)')
+                    plt.legend()
+                else:
+                    fpr, tpr, _ = roc_curve(y_true_flat, y_pred_proba)
+                    auc_score = roc_auc_score(y_true_flat, y_pred_proba)
+                    plt.plot(fpr, tpr, label=f'ROC Curve (AUC = {auc_score:.3f})')
+                    plt.plot([0, 1], [0, 1], 'k--', label='Random')
+                    plt.xlabel('False Positive Rate')
+                    plt.ylabel('True Positive Rate')
+                    plt.title('ROC Curve')
+                    plt.legend()
+            except Exception as e:
+                plt.plot([0, 1], [0, 1], 'k--', label='Random')
+                plt.title(f'ROC Curve (error: {str(e)[:40]}...)')
+                plt.legend()
 
         # 4. Precision-Recall Curve
         plt.subplot(2, 3, 4)
         if y_true is not None and y_pred_proba is not None:
-            precision, recall, _ = precision_recall_curve(y_true, y_pred_proba)
-            plt.plot(recall, precision)
-            plt.xlabel('Recall')
-            plt.ylabel('Precision')
-            plt.title('Precision-Recall Curve')
+            try:
+                y_true_flat = np.array(y_true).flatten()
+                pos_count = int(np.sum(y_true_flat == 1))
+                if pos_count == 0:
+                    plt.title('PR Curve (skipped: no positive class)')
+                else:
+                    precision, recall, _ = precision_recall_curve(y_true_flat, y_pred_proba)
+                    plt.plot(recall, precision)
+                    plt.xlabel('Recall')
+                    plt.ylabel('Precision')
+                    plt.title('Precision-Recall Curve')
+            except Exception as e:
+                plt.title(f'PR Curve (error: {str(e)[:40]}...)')
 
         # 5. Prediction Probability Distribution
         plt.subplot(2, 3, 5)
         if y_true is not None and y_pred_proba is not None:
-            plt.hist(y_pred_proba[y_true.flatten() == 0], bins=30, alpha=0.7, label='Non-cheating', density=True)
-            plt.hist(y_pred_proba[y_true.flatten() == 1], bins=30, alpha=0.7, label='Cheating', density=True)
+            y_true_flat = np.array(y_true).flatten()
+            mask_neg = (y_true_flat == 0)
+            mask_pos = (y_true_flat == 1)
+            if np.any(mask_neg):
+                plt.hist(np.array(y_pred_proba)[mask_neg], bins=30, alpha=0.7, label='Non-cheating', density=True)
+            if np.any(mask_pos):
+                plt.hist(np.array(y_pred_proba)[mask_pos], bins=30, alpha=0.7, label='Cheating', density=True)
             plt.xlabel('Predicted Probability')
             plt.ylabel('Density')
             plt.title('Prediction Probability Distribution')
@@ -848,6 +882,9 @@ def run_hparam_search(train_df: pd.DataFrame, search_params: dict, search_epochs
         print(f"[Search] Validation AUPRC: {score:.4f}")
 
         if score > best['score']:
+            # attach tuned params and score to the proctor for later persistence
+            proctor.hparams = params
+            proctor.search_score = score
             best = {'score': score, 'params': params, 'proctor': proctor}
 
     return best['proctor'], best['params'], best['score']
