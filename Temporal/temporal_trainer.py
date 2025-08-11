@@ -4,12 +4,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import WeightedRandomSampler
 import sys
 import os
 import matplotlib.pyplot as plt
 import time
 import seaborn as sns
 from sklearn.metrics import roc_curve, roc_auc_score, precision_recall_curve
+import itertools
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from Temporal.temporal_models import LSTMModel, GRUModel
@@ -148,7 +150,7 @@ class SequenceDataset(Dataset):
         return torch.tensor(self.sequences[idx], dtype=torch.float32), torch.tensor(self.labels[idx], dtype=torch.float32)
 
 class TemporalProctor:
-    def __init__(self, window_size=10, overlap=4, model_type='lstm', device=None):
+    def __init__(self, window_size=10, overlap=4, model_type='lstm', device=None, stride=None):
         """
         Initialize the temporal proctor
         
@@ -159,8 +161,10 @@ class TemporalProctor:
             device: 'cuda' or 'cpu'
         """
         self.window_size = window_size
+        print(f"Window size: {self.window_size}")
         self.overlap = overlap
-        self.step = self.window_size - self.overlap
+        # Prefer explicit stride if given; else derive from overlap
+        self.step = stride if stride is not None else (self.window_size - self.overlap)
         if self.step <= 0:
             raise ValueError("Overlap must be smaller than window_size.")
         self.model_type = model_type.lower()
@@ -168,6 +172,9 @@ class TemporalProctor:
         self.scaler = CustomScaler()
         self.device = device if device else ('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Using device: {self.device}")
+        # Keep track of feature order and threshold picked on validation
+        self.feature_cols = None
+        self.best_threshold = 0.5
         
     def load_data(self, csv_path):
         """Load and preprocess the dataset"""
@@ -187,53 +194,57 @@ class TemporalProctor:
 
         return df
     
-    def create_sequences(self, df):
-        """Create sequences for temporal modeling"""
-        # --- FIX: Use only features available at inference, in the correct order ---
-        # Define the exact feature order (must match video_proctor.py)
-        feature_cols = [
-            'timestamp',
-            'verification_result',
-            'num_faces',
-            'iris_pos',
-            'iris_ratio',
-            'mouth_zone',
-            'mouth_area',
-            'x_rotation',
-            'y_rotation',
-            'z_rotation',
-            'radial_distance',
-            'gaze_direction',
-            'gaze_zone',
-            'watch',
-            'headphone',
-            'closedbook',
-            'earpiece',
-            'cell phone',
-            'openbook',
-            'chits',
-            'sheet',
-            'H-Distance',
-            'F-Distance'
-        ]
-        # Only keep columns that exist in the dataframe
-        feature_cols = [col for col in feature_cols if col in df.columns]
-        # --- DEBUG: Print feature columns used for training ---
-        print(f"Temporal training feature columns (used for model): {feature_cols}")
+    def create_sequences(self, df, fit_scaler=False):
+        """Create sequences for temporal modeling, with optional scaler fitting."""
+        # Define the exact feature order (avoid timestamp; use time_diff instead)
+        if self.feature_cols is None:
+            candidate_cols = [
+                'verification_result',
+                'num_faces',
+                'iris_pos',
+                'iris_ratio',
+                'mouth_zone',
+                'mouth_area',
+                'x_rotation',
+                'y_rotation',
+                'z_rotation',
+                'radial_distance',
+                'gaze_direction',
+                'gaze_zone',
+                'watch',
+                'headphone',
+                'closedbook',
+                'earpiece',
+                'cell phone',
+                'openbook',
+                'chits',
+                'sheet',
+                'H-Distance',
+                'F-Distance',
+                'time_diff'
+            ]
+            self.feature_cols = [col for col in candidate_cols if col in df.columns]
+        print(f"Temporal training feature columns (used for model): {self.feature_cols}")
 
-        # Get the data
-        data = df[feature_cols].values
+        # Ensure all needed columns exist; fill missing with 0 before scaling, they will be near 0 after z-score if using means later
+        for col in self.feature_cols:
+            if col not in df.columns:
+                df[col] = 0
+
+        data = df[self.feature_cols].values
         target = df['is_cheating'].values
 
-        # Scale the features
-        data_scaled = self.scaler.fit_transform(data)
+        if fit_scaler:
+            data_scaled = self.scaler.fit_transform(data)
+        else:
+            data_scaled = self.scaler.transform(data)
 
-        # Create sequences with overlap
+        # Create sequences with overlap/stride
         X, y = [], []
         for i in range(0, len(data_scaled) - self.window_size + 1, self.step):
             X.append(data_scaled[i:i + self.window_size])
             y.append(target[i + self.window_size - 1])
-        
+
         return np.array(X), np.array(y).reshape(-1, 1)
     
     
@@ -245,9 +256,11 @@ class TemporalProctor:
             model = GRUModel(input_size)
         
         model.to(self.device)
+        # Remember input size for inference-time checks
+        self.input_size = input_size
         return model
     
-    def train(self, X_train, y_train, X_val, y_val, epochs=50, batch_size=32, lr=0.001):
+    def train(self, X_train, y_train, X_val, y_val, epochs=50, batch_size=32, lr=0.001, weight_decay=1e-4):
         """Train the model"""
         # Get input size from data
         input_size = X_train.shape[2]
@@ -270,13 +283,28 @@ class TemporalProctor:
         train_dataset = SequenceDataset(X_train, y_train)
         val_dataset = SequenceDataset(X_val, y_val)
         
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size)
+        # Handle class imbalance via sampler
+        y_train_flat = y_train.flatten()
+        class_sample_counts = np.bincount(y_train_flat.astype(int)) if len(np.unique(y_train_flat)) == 2 else None
+        sampler = None
+        if class_sample_counts is not None and len(class_sample_counts) == 2 and all(class_sample_counts > 0):
+            class_weights = 1.0 / class_sample_counts
+            sample_weights = class_weights[y_train_flat.astype(int)]
+            sampler = WeightedRandomSampler(weights=sample_weights.tolist(), num_samples=len(sample_weights), replacement=True)
+            print(f"Using WeightedRandomSampler with class counts: {class_sample_counts.tolist()}")
+
+        pin_mem = True if self.device == 'cuda' else False
+        num_workers = max(0, min(4, (os.cpu_count() or 1) - 1))
+
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=(sampler is None), sampler=sampler, pin_memory=pin_mem, num_workers=num_workers)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, pin_memory=pin_mem, num_workers=num_workers)
         
         # 🔧 FIX: Loss function and optimizer with proper device handling
         if len(unique) == 2:
-            # 🔧 Make sure pos_weight is on the correct device
-            pos_weight = torch.tensor([counts[0] / counts[1]], dtype=torch.float32).to(self.device)
+            # Compute robust pos_weight = neg/pos
+            pos = float((y_train_flat == 1).sum())
+            neg = float((y_train_flat == 0).sum())
+            pos_weight = torch.tensor([neg / max(pos, 1.0)], dtype=torch.float32).to(self.device)
             criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
             print(f"Using weighted loss with pos_weight: {pos_weight.item():.3f}")
             
@@ -287,7 +315,11 @@ class TemporalProctor:
         else:
             criterion = nn.BCELoss()
         
-        optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        optimizer = optim.AdamW(self.model.parameters(), lr=lr, weight_decay=weight_decay)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2)
+
+        use_amp = self.device == 'cuda'
+        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
         
         # Early stopping parameters
         best_val_loss = float('inf')
@@ -317,10 +349,15 @@ class TemporalProctor:
                 inputs, labels = inputs.to(self.device), labels.to(self.device)
                 
                 optimizer.zero_grad()
-                outputs = self.model(inputs)
-                loss = criterion(outputs, labels)
-                loss.backward()
-                optimizer.step()
+                with torch.cuda.amp.autocast(enabled=use_amp):
+                    outputs = self.model(inputs)
+                    loss = criterion(outputs, labels)
+                scaler.scale(loss).backward()
+                # Gradient clipping
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                scaler.step(optimizer)
+                scaler.update()
                 
                 train_loss += loss.item() * inputs.size(0)
                 
@@ -335,7 +372,7 @@ class TemporalProctor:
                 train_total += labels.size(0)
                 train_correct += (predicted == labels).sum().item()
                 
-            train_loss /= len(train_loader.dataset)
+            train_loss /= len(train_dataset)
             train_acc = train_correct / train_total
             
             # Validation phase
@@ -349,8 +386,9 @@ class TemporalProctor:
                     # 🔧 Ensure all tensors are on the same device
                     inputs, labels = inputs.to(self.device), labels.to(self.device)
                     
-                    outputs = self.model(inputs)
-                    loss = criterion(outputs, labels)
+                    with torch.cuda.amp.autocast(enabled=use_amp):
+                        outputs = self.model(inputs)
+                        loss = criterion(outputs, labels)
                     
                     val_loss += loss.item() * inputs.size(0)
                     
@@ -363,7 +401,7 @@ class TemporalProctor:
                     val_total += labels.size(0)
                     val_correct += (predicted == labels).sum().item()
                     
-            val_loss /= len(val_loader.dataset)
+            val_loss /= len(val_dataset)
             val_acc = val_correct / val_total
             
             # Update history
@@ -378,6 +416,9 @@ class TemporalProctor:
                 f"train_loss: {train_loss:.4f}, train_acc: {train_acc:.4f}, "
                 f"val_loss: {val_loss:.4f}, val_acc: {val_acc:.4f}")
             
+            # LR scheduler step
+            scheduler.step(val_loss)
+
             # Early stopping check
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
@@ -393,16 +434,50 @@ class TemporalProctor:
         if best_model_state:
             self.model.load_state_dict(best_model_state)
             
+        # After training, tune decision threshold on validation set (maximize F1)
+        try:
+            with torch.no_grad():
+                self.model.eval()
+                val_probs = []
+                val_labels = []
+                for inputs, labels in val_loader:
+                    inputs = inputs.to(self.device)
+                    outputs = self.model(inputs)
+                    probs = torch.sigmoid(outputs).detach().cpu().numpy().flatten()
+                    val_probs.append(probs)
+                    val_labels.append(labels.numpy().flatten())
+                val_probs = np.concatenate(val_probs)
+                val_labels = np.concatenate(val_labels)
+                best_f1 = -1
+                best_thr = 0.5
+                for thr in np.linspace(0.1, 0.9, 81):
+                    preds = (val_probs >= thr).astype(int)
+                    tp = np.sum((preds == 1) & (val_labels == 1))
+                    fp = np.sum((preds == 1) & (val_labels == 0))
+                    fn = np.sum((preds == 0) & (val_labels == 1))
+                    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                    f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+                    if f1 > best_f1:
+                        best_f1 = f1
+                        best_thr = float(thr)
+                self.best_threshold = best_thr
+                print(f"Picked best threshold on validation: {self.best_threshold:.3f} (F1={best_f1:.3f})")
+        except Exception as e:
+            print(f"Threshold tuning skipped due to error: {e}")
+
         return history
     
-    def evaluate(self, X_test, y_test, batch_size=32):
+    def evaluate(self, X_test, y_test, batch_size=32, threshold=None):
         """Evaluate the model"""
         if self.model is None:
             print("No model to evaluate. Train a model first.")
             return None, None
         
         test_dataset = SequenceDataset(X_test, y_test)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size)
+        pin_mem = True if self.device == 'cuda' else False
+        num_workers = max(0, min(4, (os.cpu_count() or 1) - 1))
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, pin_memory=pin_mem, num_workers=num_workers)
         
         self.model.eval()
         y_true = []
@@ -421,7 +496,8 @@ class TemporalProctor:
         
         y_true = np.array(y_true).flatten()  # flatten to 1D
         y_pred_proba = np.array(y_pred_proba).flatten()
-        y_pred = (y_pred_proba > 0.5).astype(int)
+        thr = self.best_threshold if threshold is None else threshold
+        y_pred = (y_pred_proba >= thr).astype(int)
         
         # Debug: print unique values to check for label/prediction issues
         print(f"Unique y_true: {np.unique(y_true)}")
@@ -433,6 +509,14 @@ class TemporalProctor:
         print("\nConfusion Matrix:")
         cm = custom_confusion_matrix(y_true, y_pred)
         print(cm)
+        try:
+            auroc = roc_auc_score(y_true, y_pred_proba)
+            precision, recall, _ = precision_recall_curve(y_true, y_pred_proba)
+            # Compute area under PR curve via trapezoid
+            auprc = np.trapz(precision[::-1], recall[::-1])
+            print(f"AUROC: {auroc:.4f}, AUPRC: {auprc:.4f}, Threshold: {thr:.3f}")
+        except Exception:
+            pass
         
         return y_pred_proba, y_pred
 
@@ -534,7 +618,7 @@ class TemporalProctor:
         features_for_scaling = recent_features  # <-- FIXED: do not drop any columns
         
         # Verify that the number of features matches the model's input size
-        expected_features = self.model.lstm1.input_size if self.model_type == 'lstm' else self.model.gru1.input_size
+        expected_features = getattr(self, 'input_size', features_for_scaling.shape[1])
         if features_for_scaling.shape[1] != expected_features:
             print(f"ERROR: Feature mismatch. Model expects {expected_features} features, but got {features_for_scaling.shape[1]}.")
             return None
@@ -593,7 +677,10 @@ class TemporalProctor:
                 'window_size': self.window_size,
                 'model_type': self.model_type,
                 'scaler_mean': self.scaler.mean_,
-                'scaler_scale': self.scaler.scale_
+                'scaler_scale': self.scaler.scale_,
+                'feature_cols': self.feature_cols,
+                'step': self.step,
+                'best_threshold': self.best_threshold
             }, path)
             print(f"Model and scaler saved to {path}")
         else:
@@ -604,6 +691,9 @@ class TemporalProctor:
         checkpoint = torch.load(path, map_location=self.device, weights_only=False)
         self.window_size = checkpoint.get('window_size', self.window_size)
         self.model_type = checkpoint.get('model_type', self.model_type)
+        self.feature_cols = checkpoint.get('feature_cols', self.feature_cols)
+        self.step = checkpoint.get('step', self.step)
+        self.best_threshold = checkpoint.get('best_threshold', self.best_threshold)
         
         # Load scaler parameters
         if 'scaler_mean' in checkpoint and 'scaler_scale' in checkpoint:
@@ -694,16 +784,85 @@ class TemporalProctor:
         print(f"✓ Plots saved to: {plot_path}")
         return plot_path
 
+# --------- Utilities for reproducibility and search ---------
+def set_seeds(seed: int = 42):
+    np.random.seed(seed)
+    try:
+        import random
+        random.seed(seed)
+    except Exception:
+        pass
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+def compute_auprc(y_true: np.ndarray, y_prob: np.ndarray) -> float:
+    precision, recall, _ = precision_recall_curve(y_true, y_prob)
+    # Trapz expects x increasing; recall is increasing, precision corresponds
+    return float(np.trapz(precision, recall))
+
+def grid_iter(param_grid: dict):
+    keys = list(param_grid.keys())
+    for values in itertools.product(*(param_grid[k] for k in keys)):
+        yield dict(zip(keys, values))
+
+def run_hparam_search(train_df: pd.DataFrame, search_params: dict, search_epochs: int = 20, seed: int = 42):
+    """Run a lightweight hyperparameter search. Returns (best_proctor, best_params, best_score)."""
+    set_seeds(seed)
+    best = {
+        'score': -1.0,
+        'params': None,
+        'proctor': None
+    }
+    trial = 0
+    for params in grid_iter(search_params):
+        trial += 1
+        w = params['window_size']
+        s = params['stride']
+        bs = params['batch_size']
+        lr = params['lr']
+        wd = params['weight_decay']
+        overlap = max(1, w - s)
+
+        print(f"\n[Search] Trial {trial}: window_size={w}, stride={s}, lr={lr}, wd={wd}, batch_size={bs}")
+        proctor = TemporalProctor(window_size=w, overlap=overlap, model_type='lstm', stride=s)
+        # Build sequences and split by time (no leakage)
+        X_all, y_all = proctor.create_sequences(train_df.copy(), fit_scaler=True)
+        if len(X_all) < 5:
+            print("Too few sequences for this config; skipping.")
+            continue
+        split_idx = int(len(X_all) * 0.8)
+        X_tr, y_tr = X_all[:split_idx], y_all[:split_idx]
+        X_va, y_va = X_all[split_idx:], y_all[split_idx:]
+
+        # Train
+        proctor.train(X_tr, y_tr, X_va, y_va, epochs=search_epochs, batch_size=bs, lr=lr, weight_decay=wd)
+
+        # Evaluate on validation for selection
+        y_prob, y_pred = proctor.evaluate(X_va, y_va, batch_size=bs, threshold=proctor.best_threshold)
+        if y_prob is None:
+            continue
+        score = compute_auprc(y_va.flatten(), np.array(y_prob).flatten())
+        print(f"[Search] Validation AUPRC: {score:.4f}")
+
+        if score > best['score']:
+            best = {'score': score, 'params': params, 'proctor': proctor}
+
+    return best['proctor'], best['params'], best['score']
+
 # Main execution code
 if __name__ == "__main__":
+    set_seeds(42)
     # Initialize the temporal proctor
-    proctor = TemporalProctor(window_size=15, overlap=4, model_type='lstm')
+    proctor = TemporalProctor(window_size=150, overlap=140, model_type='lstm', stride=10)
     
     # Load and combine training data
     print("Loading training data...")
     train_files = [
-        'processed_results/Train_Video1_processed.csv',
-        'processed_results/Train_Video2_processed.csv'
+        r'New_Processed_Csv\Train_Video1_processed.csv',
+        r'New_Processed_Csv\Train_Video2_processed.csv'
     ]
     
     train_dfs = []
@@ -724,61 +883,60 @@ if __name__ == "__main__":
     combined_train_df = combined_train_df.sort_values('timestamp')
     print(f"Combined training data shape: {combined_train_df.shape}")
     
-    # Create sequences from training data
-    X_train_full, y_train_full = proctor.create_sequences(combined_train_df)
-    # Save feature names used for training
-    feature_cols = combined_train_df.columns.tolist()
-    feature_cols.remove('timestamp')
-    feature_cols.remove('is_cheating')
-    train_numeric_cols = combined_train_df[feature_cols].select_dtypes(include=[np.number]).columns.tolist()
-    print(f"Temporal training feature columns: {train_numeric_cols}")
-    
-    # Split training data into train and validation (80% train, 20% validation)
-    X_train, X_val, y_train, y_val = custom_train_test_split(
-        X_train_full, y_train_full, test_size=0.2, random_state=42
-    )
+    # Optional: run a small hyperparameter search to pick a good config
+    run_search = True
+    if run_search:
+        param_grid = {
+            'window_size': [96, 128, 150],
+            'stride': [5, 10],
+            'lr': [1e-3, 3e-4],
+            'weight_decay': [1e-4, 1e-3],
+            'batch_size': [16, 32]
+        }
+        best_proctor, best_params, best_score = run_hparam_search(combined_train_df, param_grid, search_epochs=20, seed=42)
+        if best_proctor is not None:
+            print(f"\n[Search] Best params: {best_params} with AUPRC={best_score:.4f}")
+            proctor = best_proctor
+            # Recreate sequences for final training using best window/stride and re-fit scaler
+            X_full, y_full = proctor.create_sequences(combined_train_df, fit_scaler=True)
+            n = len(X_full)
+            split_idx = int(n * 0.8)
+            X_train, y_train = X_full[:split_idx], y_full[:split_idx]
+            X_val, y_val = X_full[split_idx:], y_full[split_idx:]
+            # Optionally increase epochs for final training
+            history = proctor.train(X_train, y_train, X_val, y_val, epochs=50, batch_size=best_params['batch_size'], lr=best_params['lr'], weight_decay=best_params['weight_decay'])
+        else:
+            print("[Search] No valid configuration found, proceeding with default config.")
+            X_full, y_full = proctor.create_sequences(combined_train_df, fit_scaler=True)
+            n = len(X_full)
+            split_idx = int(n * 0.8)
+            X_train, y_train = X_full[:split_idx], y_full[:split_idx]
+            X_val, y_val = X_full[split_idx:], y_full[split_idx:]
+            history = proctor.train(X_train, y_train, X_val, y_val, epochs=50, batch_size=32)
+    else:
+        # Create sequences from training data; fit scaler here
+        X_full, y_full = proctor.create_sequences(combined_train_df, fit_scaler=True)
+        # Leakage-safe split: split by time into blocks of sequences (80% earliest timestamps for train)
+        n = len(X_full)
+        split_idx = int(n * 0.8)
+        X_train, y_train = X_full[:split_idx], y_full[:split_idx]
+        X_val, y_val = X_full[split_idx:], y_full[split_idx:]
+        history = proctor.train(X_train, y_train, X_val, y_val, epochs=50, batch_size=32)
     
     print(f"Training data shape: {X_train.shape}")
     print(f"Validation data shape: {X_val.shape}")
     
-    # Build and train the model
-    history = proctor.train(X_train, y_train, X_val, y_val, epochs=50, batch_size=32)
-    
     # Load and test on test data
     print("\nLoading test data...")
     test_files = [
-        'processed_results/Test_Video1_processed.csv',
-        'processed_results/Test_Video2_processed.csv'
+        r'New_Processed_Csv\Test_Video1_processed.csv',
+        r'New_Processed_Csv\Test_Video2_processed.csv'
     ]
     
     all_test_results = []
     
-    # Define the exact feature order ONCE
-    fixed_feature_cols = [
-        'timestamp',
-        'verification_result',
-        'num_faces',
-        'iris_pos',
-        'iris_ratio',
-        'mouth_zone',
-        'mouth_area',
-        'x_rotation',
-        'y_rotation',
-        'z_rotation',
-        'radial_distance',
-        'gaze_direction',
-        'gaze_zone',
-        'watch',
-        'headphone',
-        'closedbook',
-        'earpiece',
-        'cell phone',
-        'openbook',
-        'chits',
-        'sheet',
-        'H-Distance',
-        'F-Distance'
-    ]
+    # Use the feature order discovered during training
+    fixed_feature_cols = proctor.feature_cols if proctor.feature_cols is not None else []
     
     for i, file_path in enumerate(test_files, 1):
         if os.path.exists(file_path):
@@ -791,9 +949,12 @@ if __name__ == "__main__":
             missing_cols = set(fixed_feature_cols) - set(test_feature_cols)
             if missing_cols:
                 print(f"Warning: Test data missing columns: {missing_cols}")
-            # Add missing columns as zeros if needed
+            # Add missing columns with training means for stability
+            scaler_means = proctor.scaler.mean_ if hasattr(proctor.scaler, 'mean_') and proctor.scaler.mean_ is not None else np.zeros(len(fixed_feature_cols))
+            train_means = {col: (scaler_means[idx] if idx < len(scaler_means) else 0.0)
+                           for idx, col in enumerate(fixed_feature_cols)}
             for col in missing_cols:
-                test_df[col] = 0
+                test_df[col] = train_means.get(col, 0.0)
             # Ensure correct order
             test_data = test_df[fixed_feature_cols].values
             print(f"Temporal test feature columns: {fixed_feature_cols}")
@@ -812,7 +973,7 @@ if __name__ == "__main__":
             print(f"Test sequences shape: {X_test.shape}")
             
             # Evaluate on this test file
-            y_pred_proba, y_pred = proctor.evaluate(X_test, y_test)
+            y_pred_proba, y_pred = proctor.evaluate(X_test, y_test, threshold=proctor.best_threshold)
             
             all_test_results.append({
                 'file': os.path.basename(file_path),
@@ -831,7 +992,7 @@ if __name__ == "__main__":
         combined_y_test = np.concatenate([result['y_test'] for result in all_test_results])
         
         print(f"Combined test shape: {combined_X_test.shape}")
-        y_pred_proba_combined, y_pred_combined = proctor.evaluate(combined_X_test, combined_y_test)
+        y_pred_proba_combined, y_pred_combined = proctor.evaluate(combined_X_test, combined_y_test, threshold=proctor.best_threshold)
     
     # Plot training history
     proctor.plot_training_history(history)
@@ -840,18 +1001,8 @@ if __name__ == "__main__":
     os.makedirs('Models', exist_ok=True)
     proctor.save_model('Models/temporal_proctor_trained_on_processed.pt')
     
-    # Save comprehensive results plot for combined test if available
-    if len(all_test_results) > 1 and 'y_pred_proba' in all_test_results[-1]:
-        # Use combined test results
-        proctor.plot_and_save_comprehensive_results(
-            history,
-            combined_y_test.flatten(),
-            y_pred_proba_combined.flatten(),
-            y_pred_combined.flatten(),
-            save_dir='plots',
-            model_name="TemporalModel"
-        )
-    elif all_test_results and 'y_pred_proba' in all_test_results[-1]:
+    # Save comprehensive results plot for last test file's results
+    if all_test_results and 'y_pred_proba' in all_test_results[-1]:
         # Use last test file's results
         last = all_test_results[-1]
         proctor.plot_and_save_comprehensive_results(
