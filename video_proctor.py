@@ -55,7 +55,7 @@ class VideoProctor:
         
         # Initialize temporal proctor
         self.temporal_proctor = TemporalProctor(window_size=window_size, device=self.device)
-        
+        print("Created Temporal with ", self.temporal_proctor.window_size)
         # Load the LSTM model
         if input_size is None:
             raise ValueError("input_size must be provided for loading the LSTM model")
@@ -875,8 +875,8 @@ if __name__ == "__main__":
         
         print(f"Average temporal cheating probability: {avg_prediction:.4f}")
         print(f"Maximum temporal cheating probability: {max_prediction:.4f}")
-        print(f"Percentage of frames above threshold (0.5): "
-              f"{sum(p > 0.5 for p in temporal_predictions) / len(temporal_predictions) * 100:.2f}%")
+        print(f"Percentage of frames above threshold (0.3): "
+              f"{sum(p > 0.3 for p in temporal_predictions) / len(temporal_predictions) * 100:.2f}%")
     
     if xgboost_predictions:
         avg_xgb_prediction = sum(xgboost_predictions) / len(xgboost_predictions)

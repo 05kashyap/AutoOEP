@@ -1036,6 +1036,7 @@ if __name__ == "__main__":
     
     # Save the model
     os.makedirs('Models', exist_ok=True)
+    print("Best Hyperp")
     proctor.save_model('Models/temporal_proctor_trained_on_processed.pt')
     
     # Save comprehensive results plot for last test file's results
