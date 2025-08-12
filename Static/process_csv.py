@@ -220,9 +220,9 @@ def process_all_csvs(results_dir, output_dir):
 
 if __name__ == "__main__":
     # Configuration
-    results_dir = "Proctor/results"  # Directory containing CSV files from save_features.py
-    output_dir = "processed_results"    # Directory for processed CSV files
-    
+    results_dir = r"C:\Users\singl\Desktop\Bhuvanesh\NITK\SEM4\IT255_AI\Project Files\FinalRepo\CheatusDeletus\New Csv"  # Directory containing CSV files from save_features.py
+    output_dir = r"C:\Users\singl\Desktop\Bhuvanesh\NITK\SEM4\IT255_AI\Project Files\FinalRepo\CheatusDeletus\Processed Csv"  # Directory for processed CSV files
+
     # Process all CSV files
     process_all_csvs(results_dir, output_dir)
 

@@ -120,12 +120,12 @@ class ModelManager:
             # Setup MediaPipe using Config
             media_pipe_dict = Config.get_mediapipe_config()
             
-            print("✅ Detection models loaded successfully")
+            print("Detection models loaded successfully")
             return yolo_model, media_pipe_dict
             
         except Exception as e:
-            print(f"❌ CRITICAL ERROR loading detection models: {e}")
-            print("💡 Ensure all required model files are present:")
+            print(f"CRITICAL ERROR loading detection models: {e}")
+            print("Ensure all required model files are present:")
             print(f"   - YOLO model: {Config.DEFAULT_YOLO_MODEL}")
             raise RuntimeError(f"Failed to load detection models: {e}")
             raise

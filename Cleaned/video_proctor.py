@@ -37,11 +37,11 @@ class VideoProctor:
     Main video proctoring system that orchestrates all components
     Combines static frame analysis with temporal sequence learning
     """
-    
+
     def __init__(self, target_image_path=None, model_save_dir=None, debug_mode=False):
         """
         Initialize the video proctoring system
-        
+
         Args:
             target_image_path: Path to reference image for identity verification
             model_save_dir: Directory to save/load trained models
@@ -49,7 +49,7 @@ class VideoProctor:
         """
         self.debug_mode = debug_mode
         self.model_save_dir = model_save_dir or Config.DEFAULT_MODEL_DIR
-        
+
         # Initialize core components
         self.feature_extractor = FeatureExtractor()
         self.model_manager = ModelManager()
@@ -59,11 +59,11 @@ class VideoProctor:
         self.statistics = StatisticsCalculator()
         self.image_processor = ImageProcessor()
         self.data_handler = DataHandler()
-        
+
         # Initialize proctor components
         self.static_proctor = None
         self.temporal_proctor = None
-        
+
         # Target image for identity verification
         self.target_image = None
         try:
@@ -76,84 +76,92 @@ class VideoProctor:
 
         # Setup models
         self._setup_models()
-        
+
         print("VideoProctor initialized successfully")
-    
+
     def _setup_models(self):
         """Setup YOLO and MediaPipe models"""
         try:
             # Load YOLO and MediaPipe
             yolo_model, media_pipe_dict = self._setup_yolo_and_mediapipe()
-            
+
             # Initialize static proctor
             self.static_proctor = StaticProctor(
-                yolo_model, 
-                media_pipe_dict, 
-                Config.DEFAULT_MEDIAPIPE_MODEL
+                yolo_model,
+                media_pipe_dict,
+                Config.DEFAULT_MEDIAPIPE_MODEL,
             )
-            
+
             # Initialize temporal proctor (inference-only)
-            print("📦 Initializing temporal proctor (inference)...")
+            print("Initializing temporal proctor (inference)...")
             self.temporal_proctor = TemporalProctor()
-            
+
             # Load pre-trained temporal models - REQUIRED, no fallbacks
             if not os.path.exists(self.model_save_dir):
-                raise FileNotFoundError(f"Model directory is required but not found: {self.model_save_dir}")
-            
-            print(f"📥 Loading temporal models from: {self.model_save_dir}")
+                raise FileNotFoundError(
+                    f"Model directory is required but not found: {self.model_save_dir}"
+                )
+
+            print(f"Loading temporal models from: {self.model_save_dir}")
             self.temporal_proctor.load_models(None)  # Use Config path instead of directory
-            print("✅ Temporal models loaded successfully")
-            
+            print("Temporal models loaded successfully")
+
             # Load static models (LightGBM, scaler, metadata) - REQUIRED
             self._load_static_models()
-            
-            print("✅ All models setup completed successfully")
-            
+
+            print("All models setup completed successfully")
+
         except Exception as e:
-            print(f"❌ CRITICAL ERROR in model setup: {e}")
-            print("💡 Ensure all required model files are present:")
+            print(f"CRITICAL ERROR in model setup: {e}")
+            print("Ensure all required model files are present:")
             print(f"   - Temporal models in: {self.model_save_dir}")
             print(f"   - Static model: {Config.DEFAULT_STATIC_MODEL}")
             print(f"   - MediaPipe model: {Config.DEFAULT_MEDIAPIPE_MODEL}")
             raise RuntimeError(f"Failed to initialize VideoProctor: {e}")
-            
+
     def _setup_yolo_and_mediapipe(self):
         """Setup YOLO and MediaPipe models using model manager"""
         return self.model_manager.load_detection_models()
-    
+
     def _load_static_models(self):
         """Load static models (LightGBM, scaler, metadata) - STRICT mode, all required"""
         try:
             # Verify all static model components exist
-            if not hasattr(Config, 'DEFAULT_STATIC_MODEL'):
+            if not hasattr(Config, "DEFAULT_STATIC_MODEL"):
                 raise RuntimeError("DEFAULT_STATIC_MODEL not configured")
-            
+
             if not os.path.exists(Config.DEFAULT_STATIC_MODEL):
-                raise FileNotFoundError(f"Static model file not found: {Config.DEFAULT_STATIC_MODEL}")
-            
-            scaler_path = getattr(Config, 'DEFAULT_STATIC_SCALER', None)
-            metadata_path = getattr(Config, 'DEFAULT_STATIC_METADATA', None)
-            
+                raise FileNotFoundError(
+                    f"Static model file not found: {Config.DEFAULT_STATIC_MODEL}"
+                )
+
+            scaler_path = getattr(Config, "DEFAULT_STATIC_SCALER", None)
+            metadata_path = getattr(Config, "DEFAULT_STATIC_METADATA", None)
+
             if scaler_path and not os.path.exists(scaler_path):
                 raise FileNotFoundError(f"Scaler file not found: {scaler_path}")
-            
+
             if metadata_path and not os.path.exists(metadata_path):
                 raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
-            
+
             # Load static model components
             self.model_manager.load_static_model(
-                Config.DEFAULT_STATIC_MODEL,
-                scaler_path,
-                metadata_path
+                Config.DEFAULT_STATIC_MODEL, scaler_path, metadata_path
             )
-            print("✅ Static models (LightGBM, scaler, metadata) loaded successfully")
-                
+            print("Static models (LightGBM, scaler, metadata) loaded successfully")
+
         except Exception as e:
-            print(f"❌ CRITICAL ERROR loading static models: {e}")
-            print("💡 Required static model files:")
-            print(f"   - Model: {getattr(Config, 'DEFAULT_STATIC_MODEL', 'NOT_CONFIGURED')}")
-            print(f"   - Scaler: {getattr(Config, 'DEFAULT_STATIC_SCALER', 'NOT_CONFIGURED')}")
-            print(f"   - Metadata: {getattr(Config, 'DEFAULT_STATIC_METADATA', 'NOT_CONFIGURED')}")
+            print(f"CRITICAL ERROR loading static models: {e}")
+            print("Required static model files:")
+            print(
+                f"   - Model: {getattr(Config, 'DEFAULT_STATIC_MODEL', 'NOT_CONFIGURED')}"
+            )
+            print(
+                f"   - Scaler: {getattr(Config, 'DEFAULT_STATIC_SCALER', 'NOT_CONFIGURED')}"
+            )
+            print(
+                f"   - Metadata: {getattr(Config, 'DEFAULT_STATIC_METADATA', 'NOT_CONFIGURED')}"
+            )
             raise RuntimeError(f"Failed to load required static models: {e}")
 
     def _safe_float(self, value, default=0.0):
@@ -189,6 +197,25 @@ class VideoProctor:
             # Static analysis
             static_results = self.static_proctor.process_frames(target_frame, face_frame, hand_frame)
 
+            # Optional: Static model prediction (LightGBM or similar)
+            static_model_prediction = None
+            try:
+                sm = getattr(self.model_manager, 'static_model', None)
+                if sm is not None:
+                    # Extract features and exclude timestamp (index 0)
+                    features = self.feature_extractor.extract_features_from_results(static_results)
+                    static_features = np.array(features[1:]).reshape(1, -1)
+                    # Apply scaler if available
+                    scaler = getattr(self.model_manager, 'static_scaler', None)
+                    if scaler is not None:
+                        static_features = scaler.transform(static_features)
+                    # Predict probability of class 1
+                    if hasattr(sm, 'predict_proba'):
+                        static_model_prediction = sm.predict_proba(static_features)[:, 1][0]
+            except Exception as e:
+                print(f"Error in static model prediction: {e}")
+                static_model_prediction = 0.0
+
             # Add to temporal sequence
             self.temporal_proctor.add_frame_features(static_results)
             
@@ -201,7 +228,7 @@ class VideoProctor:
             # Ensure compatibility keys for statistics/visualizer
             combined_results['temporal_prediction'] = temporal_score
             combined_results['xgboost_prediction'] = combined_results.get('xgboost_prediction', None)
-            combined_results['static_model_prediction'] = combined_results.get('static_model_prediction', None)
+            combined_results['static_model_prediction'] = static_model_prediction
             
             # Update statistics
             self.statistics.update_frame_stats(combined_results)
@@ -316,47 +343,51 @@ class VideoProctor:
             raise ValueError(f"Could not open face video: {face_video_path}")
         if not hand_cap.isOpened():
             raise ValueError(f"Could not open hand video: {hand_video_path}")
-        
+
         try:
             frame_count = 0
             max_frames = min(
                 int(face_cap.get(cv2.CAP_PROP_FRAME_COUNT)),
-                int(hand_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                int(hand_cap.get(cv2.CAP_PROP_FRAME_COUNT)),
             )
-            
+
             print(f"Processing {max_frames} frames...")
-            
+
             while True:
                 face_ret, face_frame = face_cap.read()
                 hand_ret, hand_frame = hand_cap.read()
-                
+
                 if not face_ret or not hand_ret:
                     break
-                
+
                 # Process frame pair
                 try:
                     frame_result = self.process_frame_pair(face_frame, hand_frame)
-                    frame_result['frame_number'] = str(frame_count)
+                    frame_result["frame_number"] = str(frame_count)
                     results.append(frame_result)
                 except Exception as e:
-                    results.append({
-                        'frame_number': str(frame_count),
-                        'error': str(e),
-                        'Cheat Score': 0.0,
-                        'Temporal Score': 0.0
-                    })
-                
+                    results.append(
+                        {
+                            "frame_number": str(frame_count),
+                            "error": str(e),
+                            "Cheat Score": 0.0,
+                            "Temporal Score": 0.0,
+                        }
+                    )
+
                 frame_count += 1
-                
+
                 # Progress update
                 if frame_count % 25 == 0:
-                    print(f"  Progress: {frame_count}/{max_frames} frames processed")
-                
+                    print(
+                        f"  Progress: {frame_count}/{max_frames} frames processed"
+                    )
+
         finally:
             face_cap.release()
             hand_cap.release()
-        
-        print(f"✅ Completed processing {len(results)} frames")
+
+        print(f"Completed processing {len(results)} frames")
         return results
     
     def train_temporal_models(self, training_data_dir):
@@ -364,26 +395,31 @@ class VideoProctor:
         Training is now handled by separate training script
         Use Training/temporal_trainer.py for temporal training
         and Training/static_trainer.py for static model training
-        
+
         Args:
             training_data_dir: Directory containing training data
         """
-        print("⚠️  Training has been moved to separate scripts for better organization!")
+        print("Training has been moved to separate scripts for better organization!")
         print("To train temporal models, run:")
         print("  python Training/temporal_trainer.py --data_dir <path> --model_type LSTM")
         print("To train the static model, run:")
-        print("  python Training/static_trainer.py --data <csv> --model-out <pkl> --scaler-out <pkl> --metadata-out <pkl>")
+        print(
+            "  python Training/static_trainer.py --data <csv> --model-out <pkl> --scaler-out <pkl> --metadata-out <pkl>"
+        )
         print(f"Provided training data directory: {training_data_dir}")
-        print("\nThis keeps the VideoProctor focused on inference and real-time processing.")
-        print("After training, update Config paths so VideoProctor can load the new models.")
+        print(
+            "\nThis keeps the VideoProctor focused on inference and real-time processing."
+        )
+        print(
+            "After training, update Config paths so VideoProctor can load the new models."
+        )
     
     def save_models(self):
         """Model saving is now handled by training scripts"""
-        print("⚠️  Model saving has been moved to training scripts!")
+        print("Model saving has been moved to training scripts!")
         print("Use the scripts under Training/:")
         print("  - Training/temporal_trainer.py (saves .pth)")
         print("  - Training/static_trainer.py (saves model/scaler/metadata .pkl)")
-        print("Update config.py to point to the newly saved artifacts.")
     
     def get_session_statistics(self):
         """Get comprehensive session statistics"""
@@ -394,7 +430,6 @@ class VideoProctor:
         return stats
     
     def reset_session(self):
-        """Reset session data and statistics"""
         if self.temporal_proctor is not None:
             self.temporal_proctor.reset_history()
         self.statistics.reset()

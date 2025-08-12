@@ -973,13 +973,13 @@ if __name__ == "__main__":
     
     # Configuration for your specific files
     train_csv_files = [
-        'processed_results/Train_Video1_processed.csv',
-        'processed_results/Train_Video2_processed.csv'
+        r'C:\Users\singl\Desktop\Bhuvanesh\NITK\SEM4\IT255_AI\Project Files\FinalRepo\CheatusDeletus\New_Processed_Csv\Train_Video1_processed.csv',
+        r'C:\Users\singl\Desktop\Bhuvanesh\NITK\SEM4\IT255_AI\Project Files\FinalRepo\CheatusDeletus\New_Processed_Csv\Train_Video2_processed.csv'
     ]
     
     test_csv_files = [
-        'processed_results/Test_Video1_processed.csv',
-        'processed_results/Test_Video2_processed.csv'
+        r'C:\Users\singl\Desktop\Bhuvanesh\NITK\SEM4\IT255_AI\Project Files\FinalRepo\CheatusDeletus\New_Processed_Csv\Test_Video1_processed.csv',
+        r'C:\Users\singl\Desktop\Bhuvanesh\NITK\SEM4\IT255_AI\Project Files\FinalRepo\CheatusDeletus\New_Processed_Csv\Test_Video2_processed.csv'
     ]
     
     print("Enhanced Cheating Detection Classifier with Class Imbalance Handling")

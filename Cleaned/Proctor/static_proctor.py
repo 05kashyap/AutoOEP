@@ -22,6 +22,7 @@ try:
 except ImportError:
     print("Warning: Could not load config module")
     CONFIG_LOADED = False
+    Config = None  # Ensure symbol exists for type checkers
 
 # MediaPipe setup
 BaseOptions = mp.tasks.BaseOptions
@@ -73,7 +74,7 @@ class StaticProctor:
             )
             
             self.landmarker = FaceLandmarker.create_from_options(self.options)
-            print(f"✅ MediaPipe face landmarker initialized with model: {model_path}")
+            print(f"MediaPipe face landmarker initialized with model: {model_path}")
             
         except Exception as e:
             raise RuntimeError(f"Failed to initialize MediaPipe face landmarker: {e}")
@@ -169,28 +170,36 @@ class StaticProctor:
         Returns:
             Float between 0 and 1 indicating cheating probability
         """
-        # Simple scoring algorithm - can be enhanced
+        # Scoring aligned with legacy VideoProctor; weights come from Config
         score = 0.0
-        
-        # Check for prohibited items
-        prohibited_items = ['H-Prohibited Item', 'F-Prohibited Item']
-        for item_key in prohibited_items:
-            if item_key in output and output[item_key]:
-                score += 0.3
-        
-        # Check for identity verification failure
-        if 'verification_result' in output and not output['verification_result']:
-            score += 0.4
-        
-        # Check for suspicious gaze patterns
-        if 'gaze_zone' in output and output['gaze_zone'] == 'red':
-            score += 0.2
-        
-        # Check for multiple faces
-        if 'num_faces' in output and output['num_faces'] > 1:
-            score += 0.1
-        
-        return min(score, 1.0)  # Cap at 1.0
+
+        # Resolve weights (fallback to defaults if Config not loaded)
+        prohibited_item_w = getattr(Config, 'PROHIBITED_ITEM_SCORE', 0.3) if CONFIG_LOADED else 0.3
+        identity_fail_w = getattr(Config, 'IDENTITY_FAILURE_SCORE', 0.4) if CONFIG_LOADED else 0.4
+        suspicious_gaze_w = getattr(Config, 'SUSPICIOUS_GAZE_SCORE', 0.2) if CONFIG_LOADED else 0.2
+        multiple_faces_w = getattr(Config, 'MULTIPLE_FACES_SCORE', 0.1) if CONFIG_LOADED else 0.1
+
+        # Prohibited items detected on either stream additively
+        for item_key in ('H-Prohibited Item', 'F-Prohibited Item'):
+            if output.get(item_key):
+                score += prohibited_item_w
+
+        # Identity verification failure
+        if 'verification_result' in output and not bool(output['verification_result']):
+            score += identity_fail_w
+
+        # Suspicious gaze zone
+        if output.get('gaze_zone') == 'red':
+            score += suspicious_gaze_w
+
+        # Multiple faces present
+        try:
+            if float(output.get('num_faces', 0)) > 1:
+                score += multiple_faces_w
+        except Exception:
+            pass
+
+        return min(score, 1.0)
     
     def __del__(self):
         """Cleanup resources"""
@@ -219,17 +228,8 @@ def create_test_proctor():
     
     model = YOLO(yolo_model_path)
     
-    mpHands = mp.solutions.hands
-    media_pipe_dict = {
-        'mpHands': mpHands,
-        'hands': mpHands.Hands(
-            static_image_mode=True,
-            max_num_hands=2,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
-        ),
-        'mpdraw': mp.solutions.drawing_utils
-    }
+    # Build MediaPipe config via central Config helper to avoid direct mp.solutions references
+    media_pipe_dict = Config.get_mediapipe_config()
     
     # Use Config path for MediaPipe model
     if CONFIG_LOADED:

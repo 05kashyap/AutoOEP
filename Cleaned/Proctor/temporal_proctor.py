@@ -111,10 +111,13 @@ class TemporalProctor:
         try:
             if self.use_pytorch_model and self.model is not None:
                 return self._pytorch_prediction()
-            return self._rule_based_prediction()
+            else:
+                raise RuntimeError("No valid model available for prediction")
+            # return self._rule_based_prediction()
         except Exception as e:
             print(f"Warning: Temporal prediction failed: {e}")
-            return self._rule_based_prediction()
+            raise RuntimeError("Temporal prediction failed")
+            # return self._rule_based_prediction()
     
     def _pytorch_prediction(self):
         """Make prediction using loaded PyTorch model"""
@@ -132,32 +135,37 @@ class TemporalProctor:
         
         # Scale if scaler is fitted
         sequence_array = np.array(sequence)
-        scaled_sequence = self.scaler.transform(sequence_array) if self.scaler.fitted else sequence_array
+        if self.scaler.fitted:
+            sequence_array = self.scaler.transform(sequence_array)
+        else:
+            sequence_array = sequence_array
+            raise RuntimeError("Scaler not fitted - using raw features")
+        # scaled_sequence = self.scaler.transform(sequence_array) if self.scaler.fitted else sequence_array
         
         # To tensor and forward
-        tensor_sequence = torch.FloatTensor(scaled_sequence).unsqueeze(0).to(self.device)
+        tensor_sequence = torch.FloatTensor(sequence_array).unsqueeze(0).to(self.device)
         self.model.eval()
         with torch.no_grad():
             output = self.model(tensor_sequence)
             probability = torch.sigmoid(output).item()
         return probability
     
-    def _rule_based_prediction(self):
-        """Simple rule-based temporal analysis (fallback method)"""
-        hist_list = list(self.feature_history)
-        recent_frames = hist_list[-5:]
-        suspicious_scores = []
-        for frame_features in recent_frames:
-            if len(frame_features) > 6:  # Ensure we have cheat score
-                suspicious_scores.append(frame_features[6])  # Cheat Score index
-        if suspicious_scores:
-            avg_score = np.mean(suspicious_scores)
-            if len(suspicious_scores) >= 3:
-                recent_trend = np.mean(suspicious_scores[-3:]) - np.mean(suspicious_scores[:-3])
-                if recent_trend > 0.1:
-                    avg_score += 0.2
-            return min(avg_score, 1.0)
-        return 0.0
+    # def _rule_based_prediction(self):
+    #     """Simple rule-based temporal analysis (fallback method)"""
+    #     hist_list = list(self.feature_history)
+    #     recent_frames = hist_list[-5:]
+    #     suspicious_scores = []
+    #     for frame_features in recent_frames:
+    #         if len(frame_features) > 6:  # Ensure we have cheat score
+    #             suspicious_scores.append(frame_features[6])  # Cheat Score index
+    #     if suspicious_scores:
+    #         avg_score = np.mean(suspicious_scores)
+    #         if len(suspicious_scores) >= 3:
+    #             recent_trend = np.mean(suspicious_scores[-3:]) - np.mean(suspicious_scores[:-3])
+    #             if recent_trend > 0.1:
+    #                 avg_score += 0.2
+    #         return min(avg_score, 1.0)
+    #     return 0.0
     
     def load_models(self, model_path=None):
         """Load temporal model from checkpoint path (or Config.DEFAULT_TEMPORAL_MODEL)"""
