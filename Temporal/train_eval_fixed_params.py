@@ -1,5 +1,7 @@
 import os
 import sys
+import argparse
+from glob import glob
 import numpy as np
 import pandas as pd
 from typing import Dict, Any, Tuple, Optional
@@ -73,6 +75,14 @@ def build_sequences_from_df(df: pd.DataFrame, proctor: TemporalProctor, fit_scal
 
 
 def main():
+    # Args: take directory of processed CSVs and optional patterns
+    parser = argparse.ArgumentParser(description="Train and evaluate Temporal LSTM with fixed params on processed CSVs")
+    parser.add_argument("--csv-dir", type=str, required=True, help="Directory containing processed CSV files")
+    parser.add_argument("--train-pattern", type=str, default="Train*_processed.csv", help="Glob pattern for training CSVs inside csv-dir")
+    parser.add_argument("--test-pattern", type=str, default="Test*_processed.csv", help="Glob pattern for test CSVs inside csv-dir")
+    parser.add_argument("--model-out", type=str, default="Models/temporal_proctor_fixed_params.pt", help="Path to save trained model")
+    args = parser.parse_args()
+
     set_seeds(42)
 
     window_size = PARAMS["window_size"]
@@ -81,11 +91,16 @@ def main():
 
     proctor = TemporalProctor(window_size=window_size, overlap=overlap, model_type='lstm', stride=stride)
 
-    # Load training data
-    train_files = [
-        r"C:\Users\singl\Desktop\Bhuvanesh\NITK\SEM4\IT255_AI\Project Files\FinalRepo\CheatusDeletus\New_Processed_Csv\Train_Video1_processed.csv",
-        r"C:\Users\singl\Desktop\Bhuvanesh\NITK\SEM4\IT255_AI\Project Files\FinalRepo\CheatusDeletus\New_Processed_Csv\Train_Video2_processed.csv",
-    ]
+    # Load training data from provided directory
+    csv_dir = os.path.abspath(args.csv_dir)
+    if not os.path.isdir(csv_dir):
+        print(f"CSV directory not found: {csv_dir}")
+        return
+
+    train_files = sorted(glob(os.path.join(csv_dir, args.train_pattern)))
+    print(f"Found {len(train_files)} train CSV(s) in {csv_dir} matching '{args.train_pattern}':")
+    for p in train_files:
+        print(f" - {os.path.basename(p)}")
 
     train_dfs = []
     for p in train_files:
@@ -121,11 +136,11 @@ def main():
         weight_decay=PARAMS["weight_decay"],
     )
 
-    # Prepare testing
-    test_files = [
-        r"C:\Users\singl\Desktop\Bhuvanesh\NITK\SEM4\IT255_AI\Project Files\FinalRepo\CheatusDeletus\New_Processed_Csv\Test_Video1_processed.csv",
-        r"C:\Users\singl\Desktop\Bhuvanesh\NITK\SEM4\IT255_AI\Project Files\FinalRepo\CheatusDeletus\New_Processed_Csv\Test_Video2_processed.csv",
-    ]
+    # Prepare testing from provided directory
+    test_files = sorted(glob(os.path.join(csv_dir, args.test_pattern)))
+    print(f"Found {len(test_files)} test CSV(s) in {csv_dir} matching '{args.test_pattern}':")
+    for p in test_files:
+        print(f" - {os.path.basename(p)}")
 
     results = []
     feature_cols = proctor.feature_cols or []
@@ -186,7 +201,7 @@ def main():
         print(f"[sklearn] AUPRC (AP, combined): {m_all['auprc']}")
 
     # Save the fixed-params model
-    os.makedirs('Models', exist_ok=True)
+    os.makedirs(os.path.dirname(args.model_out) or '.', exist_ok=True)
     proctor.hparams = {
         'window_size': window_size,
         'stride': stride,
@@ -196,7 +211,7 @@ def main():
         'epochs': PARAMS['epochs'],
     }
     proctor.search_score = None
-    proctor.save_model('Models/temporal_proctor_fixed_params.pt')
+    proctor.save_model(args.model_out)
 
 
 if __name__ == "__main__":
