@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import time
 import argparse
+import os
 from collections import deque
 import joblib
 from sklearn.preprocessing import StandardScaler
@@ -16,6 +17,7 @@ from Temporal.temporal_trainer import TemporalProctor
 
 class VideoProctor:
     def __init__(self, lstm_model_path, target_frame_path, mediapipe_model_path,
+                 yolo_model_path=None,
                  static_model_path=None, static_scaler_path=None, static_metadata_path=None,
                  window_size=15, input_size=None, buffer_size=30, device=None, debug_features=False):
         """
@@ -31,7 +33,8 @@ class VideoProctor:
         # Pass suppress flag: if debug enabled, do NOT suppress internal prints
         self.feature_extractor = FeatureExtractor(
             target_frame_path,
-            mediapipe_model_path,
+            face_landmarker_path=mediapipe_model_path,
+            yolo_model_path=(yolo_model_path if yolo_model_path else os.path.join(os.path.dirname(__file__), 'Models', 'OEP_YOLOv11n.pt')),
             suppress_runtime_output=(not debug_features)
         )
         
@@ -361,6 +364,7 @@ def parse_arguments():
     parser.add_argument('--output', type=str, default=None, help='Path to save output video')
     parser.add_argument('--lstm-model', type=str, required=True, help='Path to trained LSTM model')
     parser.add_argument('--mediapipe-task', type=str, required=True, help='Path to mediapipe face_landmarker.task')
+    parser.add_argument('--yolo-model', type=str, default=None, help='Path to YOLO model weights (optional; defaults to Models/OEP_YOLOv11n.pt)')
     parser.add_argument('--input-size', type=int, default=23, help='Number of features for LSTM input')
     parser.add_argument('--window-size', type=int, default=15, help='Window size for temporal analysis')
     parser.add_argument('--buffer-size', type=int, default=30, help='Size of feature buffer')
@@ -380,6 +384,7 @@ if __name__ == "__main__":
         lstm_model_path=args.lstm_model,
         target_frame_path=args.target,
         mediapipe_model_path=args.mediapipe_task,
+    yolo_model_path=args.yolo_model,
         static_model_path=args.static_model,
         static_scaler_path=args.static_scaler,
         static_metadata_path=args.static_metadata,

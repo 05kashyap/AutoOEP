@@ -11,6 +11,7 @@ import warnings
 import sys
 import contextlib
 from typing import Dict, Any, Set, Tuple, Optional, List
+import argparse
 
 # Add project root to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -43,23 +44,31 @@ class FeatureExtractor:
     and can be used for both batch processing of datasets and real-time, single-frame-pair analysis.
     """
     
-    def __init__(self, target_frame_path: str, face_landmarker_path: str = 'Models/face_landmarker.task', suppress_runtime_output: bool = True):
+    def __init__(
+        self,
+        target_frame_path: str,
+        face_landmarker_path: str = 'Models/face_landmarker.task',
+        yolo_model_path: str = 'Models/OEP_YOLOv11n.pt',
+        suppress_runtime_output: bool = True,
+    ):
         """
         Initializes the FeatureExtractor.
 
         Args:
             target_frame_path (str): The path to the target image for identity verification.
             face_landmarker_path (str): The path to the face landmarker model file.
+            yolo_model_path (str): The path to the YOLO model weights file.
         """
         print("Initializing Feature Extractor...")
         self.target_frame = self._load_target_frame(target_frame_path)
         # Control whether to suppress per-frame library logs/prints (e.g., DeepFace, face_inference)
         self.suppress_runtime_output = suppress_runtime_output
+        self.yolo_model_path = yolo_model_path
         
         with suppress_output():
             # Initialize models (YOLO, MediaPipe)
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            model = YOLO('Models/OEP_YOLOv11n.pt')
+            model = YOLO(self.yolo_model_path)
             
             # Build MediaPipe dict defensively to avoid import-time issues with type checkers
             mp_solutions = getattr(mp, 'solutions', None)
@@ -325,7 +334,15 @@ def _find_frame_paths(video_path: str, timestamp: str) -> Tuple[Optional[str], O
                         break
     return face_path, face_label, hand_path, hand_label
 
-def process_dataset_and_save_csv(dataset_path: str, target_frame_path: str, output_dir: str):
+def process_dataset_and_save_csv(
+    dataset_path: str,
+    target_frame_path: str,
+    output_dir: str,
+    *,
+    face_landmarker_path: str = 'Models/face_landmarker.task',
+    yolo_model_path: str = 'Models/OEP_YOLOv11n.pt',
+    suppress_runtime_output: bool = True,
+):
     """
     Processes an entire dataset of frames, extracts features, and saves them to CSV files.
     - A separate CSV is saved for each video directory.
@@ -339,7 +356,12 @@ def process_dataset_and_save_csv(dataset_path: str, target_frame_path: str, outp
     os.makedirs(output_dir, exist_ok=True)
     
     # Initialize the feature extractor
-    feature_extractor = FeatureExtractor(target_frame_path)
+    feature_extractor = FeatureExtractor(
+        target_frame_path,
+        face_landmarker_path=face_landmarker_path,
+        yolo_model_path=yolo_model_path,
+        suppress_runtime_output=suppress_runtime_output,
+    )
     
     all_results: List[Dict[str, Any]] = []
     
@@ -443,41 +465,57 @@ def process_dataset_and_save_csv(dataset_path: str, target_frame_path: str, outp
         print(f"  Overall cheating distribution:\n{final_df['is_cheating'].value_counts()}")
 
 if __name__ == "__main__":
-    # --- Configuration ---
-    # NOTE: Update these paths to match your local environment.
-    # The dataset path should point to the directory containing 'Train' and 'Test' folders.
-    # The target frame is the ID image used for face verification.
-    
-    # Using relative paths for better portability
+    # CLI: take all paths from argparse
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    
-    # Default dataset path assumes it's in a 'Dataset_Parser/OEPFrame_Dataset' directory
-    # relative to the project root.
-    DEFAULT_DATASET_PATH = os.path.join(project_root, "Dataset_Parser", "OEPFrame_Dataset")
-    
-    # Check if the default path exists, otherwise, prompt the user.
-    if os.path.exists(DEFAULT_DATASET_PATH):
-        dataset_path = DEFAULT_DATASET_PATH
-    else:
-        # A placeholder path. USER MUST UPDATE THIS.
-        print("="*50)
-        print("WARNING: Default dataset path not found.")
-        print(f"Tried to find it at: {DEFAULT_DATASET_PATH}")
-        dataset_path = "PLEASE_UPDATE_THIS_PATH/CheatusDeletus/Dataset_Parser/OEPFrame_Dataset"
-        print(f"Please update the 'dataset_path' variable in the script to your correct path.")
-        print("="*50)
 
-    target_frame_path = os.path.join(dataset_path, "ID.png")
-    output_dir = os.path.join(project_root, "processed_results")
-    
-    # --- Run Processing ---
-    if "PLEASE_UPDATE_THIS_PATH" in dataset_path:
-        print("\nExiting: Please configure the dataset path in the script before running.")
-    else:
-        try:
-            process_dataset_and_save_csv(dataset_path, target_frame_path, output_dir)
-        except FileNotFoundError as e:
-            print(f"\nERROR: A file was not found. Please check your paths.")
-            print(f"Details: {e}")
-        except Exception as e:
-            print(f"\nAn unexpected error occurred: {e}")
+    default_output_dir = os.path.join(project_root, "processed_results")
+    default_mediapipe_task = os.path.join(project_root, "Models", "face_landmarker.task")
+    default_yolo_model = os.path.join(project_root, "Models", "OEP_YOLOv11n.pt")
+
+    parser = argparse.ArgumentParser(description="Extract and process proctoring features from OEP frame dataset.")
+    parser.add_argument("--dataset", required=True, help="Path to dataset root containing Train/ and Test/ folders")
+    parser.add_argument("--target", required=True, help="Path to the target ID image used for verification")
+    parser.add_argument("--output-dir", default=default_output_dir, help=f"Directory to write CSVs (default: {default_output_dir})")
+    parser.add_argument("--mediapipe-task", default=default_mediapipe_task, help=f"Path to MediaPipe face landmarker .task file (default: {default_mediapipe_task})")
+    parser.add_argument("--yolo-model", default=default_yolo_model, help=f"Path to YOLO model weights (default: {default_yolo_model})")
+    parser.add_argument("--no-suppress-logs", action="store_true", help="Do not suppress per-frame library logs (DeepFace/mediapipe)")
+
+    args = parser.parse_args()
+
+    dataset_path = args.dataset
+    target_frame_path = args.target
+    output_dir = args.output_dir
+    face_landmarker_path = args.mediapipe_task
+    yolo_model_path = args.yolo_model
+    suppress_runtime_output = not args.no_suppress_logs
+
+    # Basic path validations with friendly messages
+    if not os.path.isdir(dataset_path):
+        print(f"ERROR: Dataset path does not exist or is not a directory: {dataset_path}")
+        sys.exit(1)
+    if not os.path.isfile(target_frame_path):
+        print(f"ERROR: Target image not found: {target_frame_path}")
+        sys.exit(1)
+    if not os.path.isfile(face_landmarker_path):
+        print(f"WARNING: MediaPipe task file not found at {face_landmarker_path}. Proceeding may fail.")
+    if not os.path.isfile(yolo_model_path):
+        print(f"WARNING: YOLO model file not found at {yolo_model_path}. Proceeding may fail.")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    try:
+        process_dataset_and_save_csv(
+            dataset_path,
+            target_frame_path,
+            output_dir,
+            face_landmarker_path=face_landmarker_path,
+            yolo_model_path=yolo_model_path,
+            suppress_runtime_output=suppress_runtime_output,
+        )
+    except FileNotFoundError as e:
+        print(f"\nERROR: A file was not found. Please check your paths.")
+        print(f"Details: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\nAn unexpected error occurred: {e}")
+        sys.exit(1)

@@ -9,4 +9,5 @@ python video_proctor.py ^
     --static-metadata Models\model_metadata_20250801_200619.pkl ^
     --test-duration 5 ^
     --mediapipe-task Models\face_landmarker.task ^
+    --yolo-model Models\OEP_YOLOv11n.pt ^
     --debug
