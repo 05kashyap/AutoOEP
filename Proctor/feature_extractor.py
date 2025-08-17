@@ -298,7 +298,7 @@ def _extract_timestamp(filename: str) -> Optional[str]:
 def _get_all_timestamps(video_path: str) -> Set[str]:
     """Get all unique timestamps for a given video directory."""
     all_timestamps = set()
-    for folder_type in ["face_frames", "hand_frames"]:
+    for folder_type in ["front", "side"]:
         for label_type in ["cheating_frames", "not_cheating_frames"]:
             directory = os.path.join(video_path, folder_type, label_type)
             if os.path.exists(directory):
@@ -317,7 +317,7 @@ def _find_frame_paths(video_path: str, timestamp: str) -> Tuple[Optional[str], O
         
         # Find face frame if not already found
         if not face_path:
-            face_dir = os.path.join(video_path, "face_frames", cheating_str)
+            face_dir = os.path.join(video_path, "front", cheating_str)
             if os.path.exists(face_dir):
                 for file in os.listdir(face_dir):
                     if file.endswith('.jpg') and _extract_timestamp(file) == timestamp:
@@ -326,7 +326,7 @@ def _find_frame_paths(video_path: str, timestamp: str) -> Tuple[Optional[str], O
         
         # Find hand frame if not already found
         if not hand_path:
-            hand_dir = os.path.join(video_path, "hand_frames", cheating_str)
+            hand_dir = os.path.join(video_path, "side", cheating_str)
             if os.path.exists(hand_dir):
                 for file in os.listdir(hand_dir):
                     if file.endswith('.jpg') and _extract_timestamp(file) == timestamp:
