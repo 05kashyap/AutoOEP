@@ -15,7 +15,6 @@ import contextlib
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from Proctor.proctor import StaticProctor
-import argparse
 
 # Suppress warnings and logging output
 warnings.filterwarnings("ignore")
@@ -72,7 +71,7 @@ def find_frame_paths(video_path, timestamp):
         cheating_str = "cheating_frames" if is_cheating else "not_cheating_frames"
         
         # Check face frame
-        face_dir = os.path.join(video_path, "front", cheating_str)
+        face_dir = os.path.join(video_path, "face_frames", cheating_str)
         if os.path.exists(face_dir):
             for file in os.listdir(face_dir):
                 if file.endswith('.jpg') and extract_timestamp(file) == timestamp:
@@ -81,7 +80,7 @@ def find_frame_paths(video_path, timestamp):
                     break
                     
         # Check hand frame
-        hand_dir = os.path.join(video_path, "side", cheating_str)
+        hand_dir = os.path.join(video_path, "hand_frames", cheating_str)
         if os.path.exists(hand_dir):
             for file in os.listdir(hand_dir):
                 if file.endswith('.jpg') and extract_timestamp(file) == timestamp:
@@ -95,7 +94,7 @@ def get_all_timestamps(video_path):
     """Get all unique timestamps within a specific video directory."""
     all_timestamps = set()
     
-    for folder_type in ["front", "side"]:
+    for folder_type in ["face_frames", "hand_frames"]:
         for label_type in ["cheating_frames", "not_cheating_frames"]:
             directory = os.path.join(video_path, folder_type, label_type)
             if os.path.exists(directory):
@@ -189,14 +188,14 @@ def process_video(video_path, video_name, split_name, target_frame, proctor, out
     
     return results
 
-def process_dataset(dataset_path, target_frame_path, output_dir, yolo_model_path, mediapipe_task_path):
+def process_dataset(dataset_path, target_frame_path, output_dir):
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
     
     # Setup YOLO model and MediaPipe
     with suppress_output():
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        model = YOLO(yolo_model_path)
+        model = YOLO('Models/OEP_YOLOv11n.pt')
         
         mpHands = mp.solutions.hands
         media_pipe_dict = {
@@ -215,7 +214,7 @@ def process_dataset(dataset_path, target_frame_path, output_dir, yolo_model_path
     
     # Initialize proctor
     with suppress_output():
-        proctor = StaticProctor(model, media_pipe_dict, mediapipe_task_path)
+        proctor = StaticProctor(model, media_pipe_dict, "/home/kashyap/Documents/Projects/PROCTOR/CheatusDeletus/Models/face_landmarker.task")
     
     print(f"Processing dataset at {dataset_path}")
     
@@ -258,25 +257,12 @@ def process_dataset(dataset_path, target_frame_path, output_dir, yolo_model_path
 
 if __name__ == "__main__":
     # Configuration
-    parser = argparse.ArgumentParser(description="Process OEPFrame_Dataset with Proctor features.")
-    parser.add_argument('--dataset_path', type=str, required=True, help='Path to the dataset directory')
-    parser.add_argument('--target_frame', type=str, default="ID.png", help='Target frame image path or name (default: ID.png inside dataset)')
-    parser.add_argument('--output_dir', type=str, default="results", help='Directory to save results (default: results)')
-    parser.add_argument('--yolo_model', type=str, required=True, help='Path to YOLO model file')
-    parser.add_argument('--mediapipe_task', type=str, required=True, help='Path to MediaPipe face_landmarker.task')
-    args = parser.parse_args()
-
-    dataset_path = args.dataset_path
-
-    # If target_frame is absolute, use it; else resolve inside dataset_path
-    target_frame_path = args.target_frame if os.path.isabs(args.target_frame) else os.path.join(dataset_path, args.target_frame)
-
-    # If output_dir is absolute, use it; else resolve relative to this script directory
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    output_dir = args.output_dir if os.path.isabs(args.output_dir) else os.path.join(script_dir, args.output_dir)
+    dataset_path = "/home/kashyap/Documents/Projects/PROCTOR/CheatusDeletus/Dataset_Parser/OEPFrame_Dataset"
+    target_frame_path = os.path.join(dataset_path, "ID.png")
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
     
     # Process the dataset
-    results = process_dataset(dataset_path, target_frame_path, output_dir, args.yolo_model, args.mediapipe_task)
+    results = process_dataset(dataset_path, target_frame_path, output_dir)
     if results:
         sample_df = pd.DataFrame(results[:1])  # Just show first entry structure
         print(f"\nFields captured: {', '.join(sample_df.columns)}")

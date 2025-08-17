@@ -1,6 +1,0 @@
-__pycache__/
-deletable_temp_files/
-logs/
-# Inputs/*.avi
-# Inputs/*.png
-*.md
