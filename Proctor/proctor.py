@@ -68,13 +68,14 @@ def preprocess_for_object_detection(image):
 
 
 class StaticProctor:
-    def __init__(self, yolo_model, media_pipe, model_path):
+    def __init__(self, yolo_model, media_pipe, mediapipe_model_path):
         self.yolo_model = yolo_model
         self.media_pipe = media_pipe
-        
+        with open(mediapipe_model_path, 'rb') as f:
+            buffer = f.read()
         # Initialize MediaPipe with IMAGE mode instead of LIVE_STREAM
         self.options = FaceLandmarkerOptions(
-                    base_options=BaseOptions(model_asset_path=model_path),
+                    base_options=BaseOptions(model_asset_buffer=buffer),
                     running_mode=VisionRunningMode.IMAGE,
                     num_faces = 3)
             

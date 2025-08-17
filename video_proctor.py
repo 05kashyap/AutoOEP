@@ -50,8 +50,8 @@ class VideoProctor:
         }
         
         # Initialize static proctor
-        self.static_proctor = StaticProctor(self.yolo_model, self.media_pipe_dict, model_path = mediapipe_model_path)
-        
+        self.static_proctor = StaticProctor(self.yolo_model, self.media_pipe_dict, mediapipe_model_path=mediapipe_model_path)
+
         # Initialize temporal proctor
         self.temporal_proctor = TemporalProctor(window_size=window_size, device=self.device)
         
