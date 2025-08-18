@@ -98,7 +98,9 @@ def load_and_prepare_data(train_csv_files, test_csv_files=None):
     train_counts = train_df['is_cheating'].value_counts()
     logging.info(train_counts)
     logging.info(f"Cheating rate: {train_df['is_cheating'].mean():.2%}")
-    logging.info(f"Class imbalance ratio (cheating:non-cheating): {train_counts[1]:.0f}:{train_counts[0]:.0f}")
+    c1 = int(train_counts.get(1, 0))
+    c0 = int(train_counts.get(0, 0))
+    logging.info(f"Class imbalance ratio (cheating:non-cheating): {c1}:{c0}")
     
     if test_df is not None:
         logging.info(f"Test dataset info:")
@@ -142,16 +144,24 @@ def handle_class_imbalance(X_train, y_train, method='smote'):
     logging.info(f"Applying class imbalance handling: {method}")
     logging.info(f"Original distribution: {np.bincount(y_train)}")
     
+    # Choose safe k based on minority count to avoid errors on tiny classes
+    try:
+        counts = np.bincount(y_train.astype(int))
+        minority_count = int(counts.min()) if counts.size > 0 else 0
+    except Exception:
+        minority_count = 0
+    k_safe = max(1, min(3, minority_count - 1)) if minority_count > 0 else 1
+
     if method == 'smote':
-        sampler = SMOTE(random_state=42, k_neighbors=3)
+        sampler = SMOTE(random_state=42, k_neighbors=k_safe)
     elif method == 'adasyn':
-        sampler = ADASYN(random_state=42)
+        sampler = ADASYN(random_state=42, n_neighbors=k_safe)
     elif method == 'borderline_smote':
-        sampler = BorderlineSMOTE(random_state=42)
+        sampler = BorderlineSMOTE(random_state=42, k_neighbors=k_safe)
     elif method == 'smote_tomek':
-        sampler = SMOTETomek(random_state=42)
+        sampler = SMOTETomek(random_state=42, smote=SMOTE(random_state=42, k_neighbors=k_safe))
     elif method == 'smote_enn':
-        sampler = SMOTEENN(random_state=42)
+        sampler = SMOTEENN(random_state=42, smote=SMOTE(random_state=42, k_neighbors=k_safe))
     elif method == 'undersample':
         sampler = RandomUnderSampler(random_state=42)
     else:
@@ -160,9 +170,14 @@ def handle_class_imbalance(X_train, y_train, method='smote'):
     
     try:
         with tqdm(total=1, desc=f"Applying {method}", unit="step") as pbar:
-            X_resampled, y_resampled = sampler.fit_resample(X_train, y_train)
+            res = sampler.fit_resample(X_train, y_train)
+            # Most samplers return a 2-tuple (X, y); fallback to originals if unexpected
+            if isinstance(res, tuple) and len(res) >= 2:
+                X_resampled, y_resampled = res[0], res[1]
+            else:
+                X_resampled, y_resampled = X_train, y_train
             pbar.update(1)
-        logging.info(f"Resampled distribution: {np.bincount(y_resampled)}")
+        logging.info(f"Resampled distribution: {np.bincount(np.asarray(y_resampled).astype(int))}")
         return X_resampled, y_resampled
     except Exception as e:
         logging.error(f"Resampling failed: {e}. Using original data.")
@@ -245,7 +260,7 @@ def train_xgboost(X_train, y_train, X_test, y_test):
     
     return random_search.best_estimator_, random_search
 
-def create_optuna_objective(X_train, y_train, X_val, y_val, model_type='xgboost'):
+def create_optuna_objective(X_train, y_train, X_val, y_val, model_type='xgboost', use_gpu: bool = False):
     """
     Create Optuna objective function for hyperparameter optimization
     """
@@ -265,10 +280,10 @@ def create_optuna_objective(X_train, y_train, X_val, y_val, model_type='xgboost'
                 'objective': 'binary:logistic',
                 'eval_metric': 'logloss',
                 'random_state': 42,
-                'tree_method': 'hist'
+                'tree_method': 'gpu_hist' if use_gpu else 'hist',
+                'predictor': 'gpu_predictor' if use_gpu else 'auto'
             }
             model = xgb.XGBClassifier(**params)
-            
         elif model_type == 'lightgbm':
             params = {
                 'n_estimators': trial.suggest_int('n_estimators', 100, 2000),
@@ -282,19 +297,37 @@ def create_optuna_objective(X_train, y_train, X_val, y_val, model_type='xgboost'
                 'objective': 'binary',
                 'metric': 'binary_logloss',
                 'random_state': 42,
-                'verbosity': -1
+                'verbosity': -1,
+                'device_type': 'gpu' if use_gpu else 'cpu'
             }
             model = lgb.LGBMClassifier(**params)
-        
-        model.fit(X_train, y_train)
-        y_pred_proba = model.predict_proba(X_val)[:, 1]
-        auc_score = roc_auc_score(y_val, y_pred_proba)
-        
+        else:
+            raise ValueError(f"Unsupported model_type for optimization: {model_type}")
+
+        # Try GPU; if it fails, fallback to CPU inside the trial for robustness
+        try:
+            model.fit(X_train, y_train)
+        except Exception as gpu_err:
+            if use_gpu:
+                logging.warning(f"GPU training failed for {model_type} trial; falling back to CPU. Error: {gpu_err}")
+                if model_type == 'xgboost':
+                    params['tree_method'] = 'hist'
+                    params['predictor'] = 'auto'
+                    model = xgb.XGBClassifier(**params)
+                elif model_type == 'lightgbm':
+                    params['device_type'] = 'cpu'
+                    model = lgb.LGBMClassifier(**params)
+                model.fit(X_train, y_train)
+            else:
+                raise
+        y_pred_proba = np.asarray(model.predict_proba(X_val))[:, 1]
+        auc_score = float(roc_auc_score(y_val, y_pred_proba))
+
         return auc_score
     
     return objective
 
-def train_ensemble_model(X_train, y_train, X_test, y_test, imbalance_method='smote'):
+def train_ensemble_model(X_train, y_train, X_test, y_test, imbalance_method='smote', n_trials: int = 100, timeout: int = 1800, seed: int = 42, use_gpu: bool = False):
     """
     Train ensemble of different models with extensive hyperparameter tuning
     """
@@ -313,7 +346,7 @@ def train_ensemble_model(X_train, y_train, X_test, y_test, imbalance_method='smo
     
     # XGBoost optimization
     logging.info("Optimizing XGBoost...")
-    study_xgb = optuna.create_study(direction='maximize', study_name='xgboost_optimization')
+    study_xgb = optuna.create_study(direction='maximize', study_name='xgboost_optimization', sampler=optuna.samplers.TPESampler(seed=seed))
     
     with tqdm(total=100, desc="XGBoost optimization", unit="trial") as pbar:
         def callback(study, trial):
@@ -321,9 +354,9 @@ def train_ensemble_model(X_train, y_train, X_test, y_test, imbalance_method='smo
             pbar.set_postfix_str(f"Best AUC: {study.best_value:.4f}")
         
         study_xgb.optimize(
-            create_optuna_objective(X_train_split, y_train_split, X_val_split, y_val_split, 'xgboost'), 
-            n_trials=100, 
-            timeout=1800,  # 30 minutes
+            create_optuna_objective(X_train_split, y_train_split, X_val_split, y_val_split, 'xgboost', use_gpu=use_gpu), 
+            n_trials=n_trials, 
+            timeout=timeout,  # seconds
             callbacks=[callback]
         )
     
@@ -331,8 +364,9 @@ def train_ensemble_model(X_train, y_train, X_test, y_test, imbalance_method='smo
     best_xgb_params.update({
         'objective': 'binary:logistic',
         'eval_metric': 'logloss',
-        'random_state': 42,
-        'tree_method': 'hist'
+        'random_state': seed,
+        'tree_method': 'gpu_hist' if use_gpu else 'hist',
+        'predictor': 'gpu_predictor' if use_gpu else 'auto'
     })
     
     models['xgboost'] = xgb.XGBClassifier(**best_xgb_params)
@@ -340,7 +374,7 @@ def train_ensemble_model(X_train, y_train, X_test, y_test, imbalance_method='smo
     
     # LightGBM optimization
     logging.info("Optimizing LightGBM...")
-    study_lgb = optuna.create_study(direction='maximize', study_name='lightgbm_optimization')
+    study_lgb = optuna.create_study(direction='maximize', study_name='lightgbm_optimization', sampler=optuna.samplers.TPESampler(seed=seed))
     
     with tqdm(total=100, desc="LightGBM optimization", unit="trial") as pbar:
         def callback(study, trial):
@@ -348,9 +382,9 @@ def train_ensemble_model(X_train, y_train, X_test, y_test, imbalance_method='smo
             pbar.set_postfix_str(f"Best AUC: {study.best_value:.4f}")
         
         study_lgb.optimize(
-            create_optuna_objective(X_train_split, y_train_split, X_val_split, y_val_split, 'lightgbm'), 
-            n_trials=100, 
-            timeout=1800,  # 30 minutes
+            create_optuna_objective(X_train_split, y_train_split, X_val_split, y_val_split, 'lightgbm', use_gpu=use_gpu), 
+            n_trials=n_trials, 
+            timeout=timeout,  # seconds
             callbacks=[callback]
         )
     
@@ -358,8 +392,9 @@ def train_ensemble_model(X_train, y_train, X_test, y_test, imbalance_method='smo
     best_lgb_params.update({
         'objective': 'binary',
         'metric': 'binary_logloss',
-        'random_state': 42,
-        'verbosity': -1
+        'random_state': seed,
+        'verbosity': -1,
+        'device_type': 'gpu' if use_gpu else 'cpu'
     })
     
     models['lightgbm'] = lgb.LGBMClassifier(**best_lgb_params)
@@ -367,8 +402,8 @@ def train_ensemble_model(X_train, y_train, X_test, y_test, imbalance_method='smo
     
     # Random Forest with class weighting
     logging.info("Optimizing Random Forest...")
-    class_weights = compute_class_weight('balanced', classes=np.unique(y_train_balanced), y=y_train_balanced)
-    class_weight_dict = dict(zip(np.unique(y_train_balanced), class_weights))
+    class_weights = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
+    class_weight_dict = dict(zip(np.unique(y_train), class_weights))
     
     rf_params = {
         'n_estimators': [200, 500, 800, 1000],
@@ -379,10 +414,10 @@ def train_ensemble_model(X_train, y_train, X_test, y_test, imbalance_method='smo
         'class_weight': [class_weight_dict, 'balanced']
     }
     
-    rf_model = RandomForestClassifier(random_state=42, n_jobs=-1)
+    rf_model = RandomForestClassifier(random_state=seed, n_jobs=-1)
     rf_search = RandomizedSearchCV(
         rf_model, rf_params, n_iter=50, cv=3, scoring='roc_auc', 
-        n_jobs=-1, random_state=42, verbose=0
+        n_jobs=-1, random_state=seed, verbose=0
     )
     
     with tqdm(total=1, desc="Random Forest optimization", unit="search") as pbar:
@@ -480,12 +515,16 @@ def load_model_and_metadata(model_path):
     # Load the model
     model = joblib.load(model_path)
     
-    # Try to load metadata and scaler
+    # Try to load metadata and scaler robustly using timestamp at end of filename
     try:
-        # Extract timestamp from model path
-        timestamp = model_path.split('_')[-1].replace('.pkl', '')
-        metadata_path = model_path.replace(f'xgboost_cheating_model_{timestamp}.pkl', 
-                                         f'model_metadata_{timestamp}.pkl')
+        import re as _re
+        base = os.path.basename(model_path)
+        dirn = os.path.dirname(model_path)
+        m = _re.search(r"_(\d{8}_\d{6})\.pkl$", base)
+        if not m:
+            raise ValueError("Could not extract timestamp from model filename")
+        ts = m.group(1)
+        metadata_path = os.path.join(dirn, f"model_metadata_{ts}.pkl")
         metadata = joblib.load(metadata_path)
         
         # Load scaler if it was used
@@ -496,11 +535,9 @@ def load_model_and_metadata(model_path):
                 scaler = joblib.load(scaler_path)
                 print(f"Scaler loaded successfully")
             else:
-                # Fallback: try to construct scaler path
-                scaler_path = model_path.replace(f'xgboost_cheating_model_{timestamp}.pkl', 
-                                               f'scaler_{timestamp}.pkl')
-                if os.path.exists(scaler_path):
-                    scaler = joblib.load(scaler_path)
+                fallback = os.path.join(dirn, f"scaler_{ts}.pkl")
+                if os.path.exists(fallback):
+                    scaler = joblib.load(fallback)
                     print(f"Scaler loaded from fallback path")
                 else:
                     print("Warning: Scaler was expected but not found")
@@ -689,9 +726,14 @@ def evaluate_model_comprehensive(model, X_train, y_train, X_test, y_test, featur
         
         # Find optimal threshold using PR curve
         precision, recall, thresholds = precision_recall_curve(y_test, y_test_proba)
-        f1_scores = 2 * (precision * recall) / (precision + recall)
-        optimal_idx = np.argmax(f1_scores)
-        optimal_threshold = thresholds[optimal_idx]
+        denom = np.clip(precision + recall, 1e-12, None)
+        f1_scores = np.nan_to_num(2 * (precision * recall) / denom, nan=0.0, posinf=0.0, neginf=0.0)
+        optimal_idx = int(np.argmax(f1_scores)) if f1_scores.size else 0
+        if thresholds.size > 0:
+            thr_idx = min(optimal_idx, thresholds.size - 1)
+            optimal_threshold = float(thresholds[thr_idx])
+        else:
+            optimal_threshold = 0.5
         pbar.update(1)
         
         # Feature importance (if available)
@@ -776,7 +818,7 @@ def plot_results(feature_importance, y_test, y_test_proba, save_dir='plots'):
     logging.info(f"Results plot saved to: {plot_path}")
     return plot_path
 
-def plot_comprehensive_results(feature_importance, y_test, y_test_proba, model_name="Model", save_dir='plots'):
+def plot_comprehensive_results(feature_importance, y_test, y_test_proba, model_name="Model", save_dir='plots', threshold: float = 0.5):
     """
     Create comprehensive visualizations for model results and save to files
     """
@@ -822,6 +864,12 @@ def plot_comprehensive_results(feature_importance, y_test, y_test_proba, model_n
     plt.subplot(2, 3, 4)
     plt.hist(y_test_proba[y_test == 0], bins=30, alpha=0.7, label='Non-cheating', density=True)
     plt.hist(y_test_proba[y_test == 1], bins=30, alpha=0.7, label='Cheating', density=True)
+    # Show decision threshold
+    try:
+        thr = float(threshold)
+    except Exception:
+        thr = 0.5
+    plt.axvline(thr, color='red', linestyle='--', linewidth=1, label=f'Th={thr:.2f}')
     plt.xlabel('Predicted Probability')
     plt.ylabel('Density')
     plt.title('Prediction Probability Distribution')
@@ -829,11 +877,11 @@ def plot_comprehensive_results(feature_importance, y_test, y_test_proba, model_n
     
     # Confusion matrix heatmap
     plt.subplot(2, 3, 5)
-    cm = confusion_matrix(y_test, (y_test_proba > 0.5).astype(int))
+    cm = confusion_matrix(y_test, (y_test_proba > thr).astype(int))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
     plt.xlabel('Predicted')
     plt.ylabel('Actual')
-    plt.title('Confusion Matrix (threshold=0.5)')
+    plt.title(f'Confusion Matrix (threshold={thr:.2f})')
     
     # Class distribution
     plt.subplot(2, 3, 6)
@@ -855,10 +903,12 @@ def plot_comprehensive_results(feature_importance, y_test, y_test_proba, model_n
 
 # Main execution function
 def main(train_csv_files, test_csv_files=None, use_scaling=True, imbalance_method='smote', 
-         model_type=None, optimal_threshold=None, skip_optimization=False):
+         model_type=None, optimal_threshold=None, skip_optimization=False,
+         n_trials: int = 100, timeout: int = 1800, seed: int = 42, use_gpu: bool = False):
     """
     Main function to run the complete pipeline with enhanced class imbalance handling
     """
+    log_file = None
     try:
         # Setup logging
         log_file = setup_logging()
@@ -866,6 +916,7 @@ def main(train_csv_files, test_csv_files=None, use_scaling=True, imbalance_metho
         print("🚀 Starting Enhanced Cheating Detection Training")
         print(f"📊 Training on {len(train_csv_files)} files, Testing on {len(test_csv_files) if test_csv_files else 0} files")
         print(f"📝 Detailed logs: {log_file}")
+        print(f"🖥️  Acceleration: {'GPU' if use_gpu else 'CPU'}")
         print()
         
         # Load and prepare data
@@ -918,13 +969,14 @@ def main(train_csv_files, test_csv_files=None, use_scaling=True, imbalance_metho
         else:
             # Train ensemble model with extensive optimization
             model, model_name, best_params, all_models, best_cv_score = train_ensemble_model(
-                X_train_processed, y_train_final, X_test_processed, y_test, imbalance_method
+                X_train_processed, y_train_final, X_test_processed, y_test, imbalance_method,
+                n_trials=n_trials, timeout=timeout, seed=seed, use_gpu=use_gpu
             )
         
         # Comprehensive evaluation
         feature_importance, y_test_proba, found_optimal_threshold = evaluate_model_comprehensive(
             model, X_train_processed, y_train_final, X_test_processed, y_test, 
-            X_train.columns, model_name
+            X_train_processed.columns, model_name
         )
         
         # Use provided optimal_threshold if given
@@ -942,7 +994,7 @@ def main(train_csv_files, test_csv_files=None, use_scaling=True, imbalance_metho
         
         # Create comprehensive visualizations
         with tqdm(total=1, desc="Creating visualizations", unit="step") as pbar:
-            plot_path = plot_comprehensive_results(feature_importance, y_test, y_test_proba, model_name)
+            plot_path = plot_comprehensive_results(feature_importance, y_test, y_test_proba, model_name, threshold=optimal_threshold if optimal_threshold is not None else 0.5)
             pbar.update(1)
         
         final_auc = roc_auc_score(y_test, y_test_proba)
@@ -961,7 +1013,10 @@ def main(train_csv_files, test_csv_files=None, use_scaling=True, imbalance_metho
         logging.error(f"Error occurred: {str(e)}")
         import traceback
         logging.error(traceback.format_exc())
-        print(f"❌ Training failed! Check logs for details: {log_file}")
+        if log_file:
+            print(f"❌ Training failed! Check logs for details: {log_file}")
+        else:
+            print("❌ Training failed! Check logs for details in the logs directory.")
         return None, None, None, None, None, None
 
 if __name__ == "__main__":
@@ -970,21 +1025,28 @@ if __name__ == "__main__":
     parser.add_argument('--model-type', type=str, default=None, help='Model type to use directly (lightgbm, xgboost, random_forest)')
     parser.add_argument('--optimal-threshold', type=float, default=None, help='Optimal threshold to use for classification')
     parser.add_argument('--skip-optimization', action='store_true', help='Skip hyperparameter optimization and use specified model')
-    
+    parser.add_argument('--n-trials', type=int, default=100, help='Number of Optuna trials for model tuning')
+    parser.add_argument('--timeout', type=int, default=1800, help='Global timeout for each study in seconds')
+    parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
+    parser.add_argument('--gpu', action='store_true', help='Enable GPU acceleration for supported models (XGBoost/LightGBM)')
     # Configuration for your specific files
-    train_csv_files = [
-        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new_csv\\Train_Video1_processed.csv',
-        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new_csv\\Train_Video2_processed.csv'
-    ]
-    test_csv_files = [
-        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new_csv\\Test_Video1_processed.csv',
-        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new_csv\\Test_Video2_processed.csv'
-    ]
+    parser.add_argument('--train-dir', type=str, required=True, help='Directory containing training CSV files')
+    parser.add_argument('--test-dir', type=str, required=True, help='Directory containing test CSV files')
+
+    def get_csv_files_from_dir(directory):
+        files = [
+            os.path.join(directory, f)
+            for f in os.listdir(directory)
+            if f.endswith('.csv')
+        ] if os.path.isdir(directory) else []
+        return sorted(files)
+
+    args = parser.parse_args()
+    train_csv_files = get_csv_files_from_dir(args.train_dir)
+    test_csv_files = get_csv_files_from_dir(args.test_dir)
     
     print("Enhanced Cheating Detection Classifier with Class Imbalance Handling")
     print("="*70)
-    
-    args = parser.parse_args()
     # If user specifies skip_optimization and model_type, run only that config
     if args.skip_optimization and args.model_type:
         print(f"Running with user-specified config: imbalance_method={args.imbalance_method}, model_type={args.model_type}, optimal_threshold={args.optimal_threshold}")
@@ -995,7 +1057,11 @@ if __name__ == "__main__":
             imbalance_method=args.imbalance_method or 'borderline_smote',
             model_type=args.model_type,
             optimal_threshold=args.optimal_threshold,
-            skip_optimization=True
+            skip_optimization=True,
+            n_trials=args.n_trials,
+            timeout=args.timeout,
+            seed=args.seed,
+            use_gpu=args.gpu
         )
     else:
         # Try different imbalance handling methods as before
@@ -1011,7 +1077,16 @@ if __name__ == "__main__":
             
             logging.info(f"TRYING IMBALANCE METHOD: {method.upper()}")
             
-            result = main(train_csv_files, test_csv_files, use_scaling=True, imbalance_method=method)
+            result = main(
+                train_csv_files,
+                test_csv_files,
+                use_scaling=True,
+                imbalance_method=method,
+                n_trials=args.n_trials,
+                timeout=args.timeout,
+                seed=args.seed,
+                use_gpu=args.gpu
+            )
             
             if result[0] is not None:
                 # Quick evaluation to compare methods
@@ -1024,7 +1099,7 @@ if __name__ == "__main__":
                 if result[4] is not None:  # scaler
                     X_test_quick = pd.DataFrame(result[4].transform(X_test_quick), columns=X_test_quick.columns)
                 
-                y_pred_proba = model.predict_proba(X_test_quick)[:, 1]
+                y_pred_proba = np.asarray(model.predict_proba(X_test_quick))[:, 1]
                 auc_score = roc_auc_score(y_test_quick, y_pred_proba)
                 
                 logging.info(f"Method {method} achieved AUC: {auc_score:.4f}")
