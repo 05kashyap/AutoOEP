@@ -20,6 +20,20 @@ from Proctor.proctor import StaticProctor
 # Suppress warnings and logging output
 warnings.filterwarnings("ignore")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TensorFlow logging
+# Prefer faster matmul on supported GPUs (PyTorch 2.0+); safe no-op otherwise
+try:
+    torch.set_float32_matmul_precision('high')
+except Exception:
+    pass
+# Enable OpenCV optimizations
+try:
+    cv2.setUseOptimized(True)
+    # Leave 1 core free to keep UI responsive
+    _cpus = os.cpu_count() if hasattr(os, 'cpu_count') else None
+    if isinstance(_cpus, int) and _cpus and _cpus > 1:
+        cv2.setNumThreads(max(1, _cpus - 1))
+except Exception:
+    pass
 
 # Context manager to suppress stdout/stderr from libraries
 @contextlib.contextmanager
@@ -49,6 +63,8 @@ class FeatureExtractor:
         target_frame_path: str,
         face_landmarker_path: str = 'Models/face_landmarker.task',
         yolo_model_path: str = 'Models/OEP_YOLOv11n.pt',
+    device: Optional[str] = None,
+    use_half: Optional[bool] = None,
         suppress_runtime_output: bool = True,
     ):
         """
@@ -67,8 +83,29 @@ class FeatureExtractor:
         
         with suppress_output():
             # Initialize models (YOLO, MediaPipe)
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            resolved_device = (
+                torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                if device in (None, 'auto') else torch.device(device)
+            )
+            # Enable cuDNN autotune on CUDA for better perf with varying input sizes
+            if resolved_device.type == 'cuda':
+                torch.backends.cudnn.benchmark = True
+
             model = YOLO(self.yolo_model_path)
+            # Move YOLO to the desired device and optionally enable half precision
+            try:
+                model.to(resolved_device)
+            except Exception:
+                pass
+            # Try to fuse Conv+BN where supported for faster inference
+            try:
+                model.fuse()
+            except Exception:
+                pass
+            # Decide half precision (handled internally by Ultralytics during predict if supported)
+            resolved_use_half = (resolved_device.type == 'cuda') if use_half is None else (use_half and resolved_device.type == 'cuda')
+            self._yolo_device = resolved_device
+            self._yolo_half = resolved_use_half
             
             # Build MediaPipe dict defensively to avoid import-time issues with type checkers
             mp_solutions = getattr(mp, 'solutions', None)
@@ -294,7 +331,7 @@ class FeatureExtractor:
             
         # Get raw features from StaticProctor
         ctx = suppress_output() if self.suppress_runtime_output else contextlib.nullcontext()
-        with ctx:
+        with ctx, torch.inference_mode():
             raw_features = self.proctor.process_frames(self.target_frame, face_frame, hand_frame)
         
         # Process the raw features into the final format
@@ -354,6 +391,8 @@ def process_dataset_and_save_csv(
     *,
     face_landmarker_path: str = 'Models/face_landmarker.task',
     yolo_model_path: str = 'Models/OEP_YOLOv11n.pt',
+    device: Optional[str] = 'auto',
+    use_half: Optional[bool] = None,
     suppress_runtime_output: bool = True,
 ):
     """
@@ -373,6 +412,8 @@ def process_dataset_and_save_csv(
         target_frame_path,
         face_landmarker_path=face_landmarker_path,
         yolo_model_path=yolo_model_path,
+    device=device,
+    use_half=use_half,
         suppress_runtime_output=suppress_runtime_output,
     )
     
@@ -491,6 +532,8 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", default=default_output_dir, help=f"Directory to write CSVs (default: {default_output_dir})")
     parser.add_argument("--mediapipe-task", default=default_mediapipe_task, help=f"Path to MediaPipe face landmarker .task file (default: {default_mediapipe_task})")
     parser.add_argument("--yolo-model", default=default_yolo_model, help=f"Path to YOLO model weights (default: {default_yolo_model})")
+    parser.add_argument("--device", default='auto', choices=['auto', 'cpu', 'cuda'], help="Inference device for YOLO (default: auto)")
+    parser.add_argument("--fp16", action="store_true", help="Force FP16 (half) inference on CUDA where supported")
     parser.add_argument("--no-suppress-logs", action="store_true", help="Do not suppress per-frame library logs (DeepFace/mediapipe)")
 
     args = parser.parse_args()
@@ -500,6 +543,8 @@ if __name__ == "__main__":
     output_dir = args.output_dir
     face_landmarker_path = args.mediapipe_task
     yolo_model_path = args.yolo_model
+    device = args.device
+    use_half = True if args.fp16 else None  # None => auto (enabled on CUDA)
     suppress_runtime_output = not args.no_suppress_logs
 
     # Basic path validations with friendly messages
@@ -523,6 +568,8 @@ if __name__ == "__main__":
             output_dir,
             face_landmarker_path=face_landmarker_path,
             yolo_model_path=yolo_model_path,
+            device=device,
+            use_half=use_half,
             suppress_runtime_output=suppress_runtime_output,
         )
     except FileNotFoundError as e:
