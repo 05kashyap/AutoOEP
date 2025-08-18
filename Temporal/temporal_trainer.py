@@ -293,7 +293,7 @@ class TemporalProctor:
         model.to(self.device)
         return model
     
-    def train(self, X_train, y_train, X_val, y_val, epochs=50, batch_size=32, lr=0.001, threshold = 0.4):
+    def train(self, X_train, y_train, X_val, y_val, epochs=80, batch_size=32, lr=0.001, threshold = 0.5):
         """Train the model"""
         # Get input size from data
         input_size = X_train.shape[2]
@@ -334,11 +334,11 @@ class TemporalProctor:
             criterion = nn.BCELoss()
         
         # optimizer = optim.Adam(self.model.parameters(), lr=lr)
-        optimizer = optim.AdamW(self.model.parameters(), lr=1e-3, weight_decay=5e-5)
+        optimizer = optim.AdamW(self.model.parameters(), lr=1e-3, weight_decay=1e-5)
 
         # Early stopping parameters
         best_val_loss = float('inf')
-        patience = 10
+        patience = 15
         patience_counter = 0
         best_model_state = None
         
@@ -749,8 +749,8 @@ if __name__ == "__main__":
     # Load and combine training data
     print("Loading training data...")
     train_files = [
-        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new_csv\\Train_Video1_processed.csv',
-        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new_csv\\Train_Video2_processed.csv'
+        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new2_csv\\train\\Train_Video1_processed.csv',
+        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new2_csv\\train\\Train_Video2_processed.csv'
     ]
     
     train_dfs = []
@@ -794,8 +794,8 @@ if __name__ == "__main__":
     # Load and test on test data
     print("\nLoading test data...")
     test_files = [
-        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new_csv\\Test_Video1_processed.csv',
-        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new_csv\\Test_Video2_processed.csv'
+        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new2_csv\\test\\Test_Video1_processed.csv',
+        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new2_csv\\test\\Test_Video2_processed.csv'
     ]
     
     all_test_results = []

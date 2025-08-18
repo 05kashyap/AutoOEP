@@ -27,6 +27,34 @@ class LSTMModel(nn.Module):
         self.relu = nn.ReLU()
         self.fc2 = nn.Linear(fc_hidden, output_size)
         
+        # ---- Custom Initialization ----
+        self._init_weights()
+        
+
+    def _init_weights(self):
+        # Initialize LSTM
+        for name, param in self.lstm.named_parameters():
+            if "weight_ih" in name:
+                nn.init.xavier_uniform_(param.data)  # input -> hidden
+            elif "weight_hh" in name:
+                nn.init.orthogonal_(param.data)      # hidden -> hidden
+            elif "bias" in name:
+                param.data.fill_(0)
+                # Forget gate bias trick
+                n = param.size(0)
+                param.data[n//4:n//2].fill_(1.0)
+
+        # Initialize classifier layers
+        nn.init.xavier_uniform_(self.fc1.weight)
+        nn.init.zeros_(self.fc1.bias)
+        nn.init.xavier_uniform_(self.fc2.weight)
+        nn.init.zeros_(self.fc2.bias)
+
+        # Attention (if used)
+        if self.pooling == "attention":
+            nn.init.xavier_uniform_(self.attn.weight)
+            nn.init.zeros_(self.attn.bias)
+
 
     def forward(self, x):
         out, (h_n, c_n) = self.lstm(x)   # out: (batch, seq_len, hidden)
@@ -39,9 +67,7 @@ class LSTMModel(nn.Module):
             x = out.mean(dim=1)  # mean over time: (batch, hidden)
             
         elif self.pooling == "attention":
-            # Compute attention weights
             attn_weights = F.softmax(self.attn(out), dim=1)  # (batch, seq_len, 1)
-            # Weighted sum of LSTM outputs
             x = torch.sum(out * attn_weights, dim=1)  # (batch, hidden)
             
         else:
