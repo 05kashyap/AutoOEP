@@ -200,7 +200,7 @@ class VideoProctor:
         return results
     
     def process_videos(self, face_video_path, hand_video_path,
-                  output_path=None, display=True, fps=30, test_duration=None):
+                  output_path=None, display=True, fps=10, test_duration=None, process_fps=None):
         """
         Process video streams from face and hand cameras.
         """
@@ -217,6 +217,7 @@ class VideoProctor:
 
         results = []
         frame_count = 0
+        processed_count = 0
         start_time = time.time()
         
         max_frames = int(test_duration * fps) if test_duration else None
@@ -228,8 +229,23 @@ class VideoProctor:
             if not face_ret or not hand_ret:
                 break
             
+            # Count every read frame
+            frame_count += 1
+            
+            # If limiting processing FPS, skip processing some frames entirely
+            if process_fps and process_fps > 0:
+                elapsed = time.time() - start_time
+                target_processed = int(elapsed * process_fps)
+                if processed_count >= target_processed:
+                    # skip processing and any display/output updates this frame
+                    if max_frames and frame_count >= max_frames:
+                        break
+                    continue
+
+            # Process this frame pair
             result = self.process_frame_pair(face_frame, hand_frame)
             results.append(result)
+            processed_count += 1
             
             display_frame = self.create_display_frame(face_frame, hand_frame, result)
             
@@ -258,13 +274,15 @@ class VideoProctor:
                 if cv2.waitKey(1) & 0xFF == 27: # ESC key
                     break
             
-            frame_count += 1
             if max_frames and frame_count >= max_frames:
                 break
             
         elapsed_time = time.time() - start_time
         processed_fps = frame_count / elapsed_time if elapsed_time > 0 else 0
         print(f"Processed {frame_count} frames in {elapsed_time:.2f} seconds ({processed_fps:.2f} FPS)")
+        if process_fps:
+            eff = processed_count / elapsed_time if elapsed_time > 0 else 0
+            print(f"Effective processed FPS: {eff:.2f} (target {process_fps}) | processed frames: {processed_count}")
         
         face_cap.release()
         hand_cap.release()
@@ -300,7 +318,7 @@ class VideoProctor:
         
         # Display Temporal Prediction
         if temporal_pred is not None:
-            color = (0, 0, 255) if temporal_pred > 0.5 else (0, 255, 0)
+            color = (0, 0, 255) if temporal_pred > 0.4 else (0, 255, 0)
             cv2.putText(combined_frame, f"Temporal Pred: {temporal_pred:.2f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
             
         # Display overall warning
@@ -370,6 +388,7 @@ def parse_arguments():
     parser.add_argument('--buffer-size', type=int, default=30, help='Size of feature buffer')
     parser.add_argument('--display', action='store_true', help='Display processed video in real-time')
     parser.add_argument('--test-duration', type=int, default=None, help='Duration in seconds to process for testing')
+    parser.add_argument('--process-fps', type=float, default=None, help='Limit processing to this many FPS (downsample by skipping frames)')
     parser.add_argument('--static-model', type=str, default=None, help='Path to saved static model (e.g., LightGBM/XGBoost)')
     parser.add_argument('--static-scaler', type=str, default=None, help='Path to static model scaler (optional)')
     parser.add_argument('--static-metadata', type=str, default=None, help='Path to static model metadata (optional)')
@@ -384,7 +403,7 @@ if __name__ == "__main__":
         lstm_model_path=args.lstm_model,
         target_frame_path=args.target,
         mediapipe_model_path=args.mediapipe_task,
-    yolo_model_path=args.yolo_model,
+        yolo_model_path=args.yolo_model,
         static_model_path=args.static_model,
         static_scaler_path=args.static_scaler,
         static_metadata_path=args.static_metadata,
@@ -399,8 +418,9 @@ if __name__ == "__main__":
         face_video_path=args.face,
         hand_video_path=args.hand,
         output_path=args.output,
-        display=args.display,
-        test_duration=args.test_duration
+    display=args.display,
+    test_duration=args.test_duration,
+    process_fps=args.process_fps
     )
     
     print(f"Processed {len(results)} frames.")

@@ -427,7 +427,7 @@ def train_ensemble_model(X_train, y_train, X_test, y_test, imbalance_method='smo
 
 # Enhanced model saving functionality
 def save_model_and_metadata(model, feature_names, scaler=None, model_name="best_model", 
-                           best_params=None, model_dir='Models'):
+                           best_params=None, model_dir='Models_new'):
     """
     Save the trained model, scaler, and associated metadata
     """
@@ -973,13 +973,12 @@ if __name__ == "__main__":
     
     # Configuration for your specific files
     train_csv_files = [
-        'processed_results/Train_Video1_processed.csv',
-        'processed_results/Train_Video2_processed.csv'
+        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new_csv\\Train_Video1_processed.csv',
+        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new_csv\\Train_Video2_processed.csv'
     ]
-    
     test_csv_files = [
-        'processed_results/Test_Video1_processed.csv',
-        'processed_results/Test_Video2_processed.csv'
+        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new_csv\\Test_Video1_processed.csv',
+        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new_csv\\Test_Video2_processed.csv'
     ]
     
     print("Enhanced Cheating Detection Classifier with Class Imbalance Handling")

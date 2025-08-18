@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import time
 import seaborn as sns
 from sklearn.metrics import roc_curve, roc_auc_score, precision_recall_curve
+import re
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from Temporal.temporal_models import LSTMModel, GRUModel
@@ -174,7 +175,52 @@ class TemporalProctor:
         # Load the dataset
         df = pd.read_csv(csv_path)
 
-        # Sort by timestamp (just to be sure)
+        # Normalize timestamps: handle string formats like '0-00-01.550000' or '0:00:01.550000'
+        def _ts_to_seconds(v):
+            # Already numeric
+            if isinstance(v, (int, float, np.integer, np.floating)):
+                return float(v)
+            if v is None or (isinstance(v, float) and np.isnan(v)):
+                return 0.0
+            s = str(v).strip()
+            if s == '':
+                return 0.0
+            # Try regex: HH[-:]MM[-:]SS[. or -][fraction]
+            m = re.match(r"^(\d+)[-:](\d+)[-:](\d+)(?:[.\-](\d+))?$", s)
+            if m:
+                h = int(m.group(1)); mn = int(m.group(2)); sec = int(m.group(3))
+                frac = m.group(4)
+                frac_val = 0.0
+                if frac is not None and frac != '':
+                    # interpret as fractional seconds (micro/milli), scale by digits
+                    try:
+                        frac_val = int(frac) / (10 ** len(frac))
+                    except Exception:
+                        frac_val = 0.0
+                return h * 3600 + mn * 60 + sec + frac_val
+            # Fallback: replace first two '-' with ':' and remaining '-' with '.' then try pandas to_timedelta
+            try:
+                parts = s
+                # Replace up to first two '-' with ':'
+                cnt = 0
+                new_chars = []
+                for ch in parts:
+                    if ch == '-' and cnt < 2:
+                        new_chars.append(':'); cnt += 1
+                    else:
+                        new_chars.append(ch)
+                cleaned = ''.join(new_chars)
+                cleaned = cleaned.replace('-', '.')
+                # Now attempt to parse HH:MM:SS.FFFFFF
+                td = pd.to_timedelta(cleaned)
+                return td.total_seconds()
+            except Exception:
+                return 0.0
+
+        if 'timestamp' in df.columns:
+            df['timestamp'] = df['timestamp'].apply(_ts_to_seconds).astype(float)
+
+        # Sort by timestamp (numeric seconds)
         df = df.sort_values('timestamp')
 
         # Calculate time differences for potential weighting
@@ -247,7 +293,7 @@ class TemporalProctor:
         model.to(self.device)
         return model
     
-    def train(self, X_train, y_train, X_val, y_val, epochs=50, batch_size=32, lr=0.001):
+    def train(self, X_train, y_train, X_val, y_val, epochs=50, batch_size=32, lr=0.001, threshold = 0.4):
         """Train the model"""
         # Get input size from data
         input_size = X_train.shape[2]
@@ -287,11 +333,12 @@ class TemporalProctor:
         else:
             criterion = nn.BCELoss()
         
-        optimizer = optim.Adam(self.model.parameters(), lr=lr)
-        
+        # optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        optimizer = optim.AdamW(self.model.parameters(), lr=1e-3, weight_decay=5e-5)
+
         # Early stopping parameters
         best_val_loss = float('inf')
-        patience = 5
+        patience = 10
         patience_counter = 0
         best_model_state = None
         
@@ -327,10 +374,10 @@ class TemporalProctor:
                 # 🔧 Fix prediction logic based on loss function
                 if len(unique) == 2 and isinstance(criterion, nn.BCEWithLogitsLoss):
                     # For BCEWithLogitsLoss, apply sigmoid to get probabilities
-                    predicted = (torch.sigmoid(outputs) > 0.5).float()
+                    predicted = (torch.sigmoid(outputs) > threshold).float()
                 else:
                     # For BCELoss, outputs are already probabilities
-                    predicted = (outputs > 0.5).float()
+                    predicted = (outputs > threshold).float()
                     
                 train_total += labels.size(0)
                 train_correct += (predicted == labels).sum().item()
@@ -356,10 +403,10 @@ class TemporalProctor:
                     
                     # 🔧 Fix prediction logic for validation too
                     if len(unique) == 2 and isinstance(criterion, nn.BCEWithLogitsLoss):
-                        predicted = (torch.sigmoid(outputs) > 0.5).float()
+                        predicted = (torch.sigmoid(outputs) > threshold).float()
                     else:
-                        predicted = (outputs > 0.5).float()
-                        
+                        predicted = (outputs > threshold).float()
+
                     val_total += labels.size(0)
                     val_correct += (predicted == labels).sum().item()
                     
@@ -394,8 +441,8 @@ class TemporalProctor:
             self.model.load_state_dict(best_model_state)
             
         return history
-    
-    def evaluate(self, X_test, y_test, batch_size=32):
+
+    def evaluate(self, X_test, y_test, batch_size=32, threshold=0.4):
         """Evaluate the model"""
         if self.model is None:
             print("No model to evaluate. Train a model first.")
@@ -421,8 +468,8 @@ class TemporalProctor:
         
         y_true = np.array(y_true).flatten()  # flatten to 1D
         y_pred_proba = np.array(y_pred_proba).flatten()
-        y_pred = (y_pred_proba > 0.5).astype(int)
-        
+        y_pred = (y_pred_proba > threshold).astype(int)
+
         # Debug: print unique values to check for label/prediction issues
         print(f"Unique y_true: {np.unique(y_true)}")
         print(f"Unique y_pred: {np.unique(y_pred)}")
@@ -534,7 +581,7 @@ class TemporalProctor:
         features_for_scaling = recent_features  # <-- FIXED: do not drop any columns
         
         # Verify that the number of features matches the model's input size
-        expected_features = self.model.lstm1.input_size if self.model_type == 'lstm' else self.model.gru1.input_size
+        expected_features = self.model.lstm.input_size if self.model_type == 'lstm' else self.model.gru1.input_size
         if features_for_scaling.shape[1] != expected_features:
             print(f"ERROR: Feature mismatch. Model expects {expected_features} features, but got {features_for_scaling.shape[1]}.")
             return None
@@ -584,8 +631,8 @@ class TemporalProctor:
         
         plt.tight_layout()
         plt.show()
-            
-    def save_model(self, path='Models/temporal_proctor_model.pt'):
+
+    def save_model(self, path='Models_new/temporal_proctor_model.pt'):
         """Save the model and scaler"""
         if self.model is not None:
             torch.save({
@@ -599,7 +646,7 @@ class TemporalProctor:
         else:
             print("No model to save. Train a model first.")
 
-    def load_model(self, path='Models/temporal_proctor_model.pt', input_size=None):
+    def load_model(self, path='Models_new/temporal_proctor_model.pt', input_size=None):
         """Load a saved model and scaler"""
         checkpoint = torch.load(path, map_location=self.device, weights_only=False)
         self.window_size = checkpoint.get('window_size', self.window_size)
@@ -697,13 +744,13 @@ class TemporalProctor:
 # Main execution code
 if __name__ == "__main__":
     # Initialize the temporal proctor
-    proctor = TemporalProctor(window_size=15, overlap=4, model_type='lstm')
-    
+    proctor = TemporalProctor(window_size=15, overlap=5, model_type='lstm')
+    threshold = 0.4
     # Load and combine training data
     print("Loading training data...")
     train_files = [
-        'processed_results/Train_Video1_processed.csv',
-        'processed_results/Train_Video2_processed.csv'
+        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new_csv\\Train_Video1_processed.csv',
+        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new_csv\\Train_Video2_processed.csv'
     ]
     
     train_dfs = []
@@ -742,13 +789,13 @@ if __name__ == "__main__":
     print(f"Validation data shape: {X_val.shape}")
     
     # Build and train the model
-    history = proctor.train(X_train, y_train, X_val, y_val, epochs=50, batch_size=32)
-    
+    history = proctor.train(X_train, y_train, X_val, y_val, epochs=50, batch_size=32, threshold=threshold)
+
     # Load and test on test data
     print("\nLoading test data...")
     test_files = [
-        'processed_results/Test_Video1_processed.csv',
-        'processed_results/Test_Video2_processed.csv'
+        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new_csv\\Test_Video1_processed.csv',
+        'C:\\Users\\singl\\Desktop\\Bhuvanesh\\NITK\\SEM4\\IT255_AI\\Project Files\\FinalRepo\\bhuvanesh_fix\\CheatusDeletus\\new_csv\\Test_Video2_processed.csv'
     ]
     
     all_test_results = []
@@ -812,7 +859,7 @@ if __name__ == "__main__":
             print(f"Test sequences shape: {X_test.shape}")
             
             # Evaluate on this test file
-            y_pred_proba, y_pred = proctor.evaluate(X_test, y_test)
+            y_pred_proba, y_pred = proctor.evaluate(X_test, y_test,threshold=threshold)
             
             all_test_results.append({
                 'file': os.path.basename(file_path),
@@ -831,15 +878,15 @@ if __name__ == "__main__":
         combined_y_test = np.concatenate([result['y_test'] for result in all_test_results])
         
         print(f"Combined test shape: {combined_X_test.shape}")
-        y_pred_proba_combined, y_pred_combined = proctor.evaluate(combined_X_test, combined_y_test)
-    
+        y_pred_proba_combined, y_pred_combined = proctor.evaluate(combined_X_test, combined_y_test, threshold=threshold)
+
     # Plot training history
     proctor.plot_training_history(history)
     
     # Save the model
-    os.makedirs('Models', exist_ok=True)
-    proctor.save_model('Models/temporal_proctor_trained_on_processed.pt')
-    
+    os.makedirs('Models_new', exist_ok=True)
+    proctor.save_model('Models_new/temporal_proctor_trained_on_processed.pt')
+
     # Save comprehensive results plot for combined test if available
     if len(all_test_results) > 1 and 'y_pred_proba' in all_test_results[-1]:
         # Use combined test results
