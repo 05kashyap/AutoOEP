@@ -173,8 +173,16 @@ class FeatureExtractor:
             if val is None:
                 return items
             # If already a collection of strings
-            if isinstance(val, (list, tuple, set)):
-                for x in val:
+            if isinstance(val, (list, tuple, set, np.ndarray)):
+                # Convert numpy array to iterable of python objects if needed
+                if isinstance(val, np.ndarray):
+                    try:
+                        val_iter = val.tolist()
+                    except Exception:
+                        val_iter = []
+                else:
+                    val_iter = val
+                for x in val_iter:
                     if isinstance(x, str):
                         s = x.strip().lower()
                         if s:
@@ -195,10 +203,15 @@ class FeatureExtractor:
             return items
 
         observed: Set[str] = set()
-        if 'F-Prohibited Item' in raw_features and pd.notna(raw_features['F-Prohibited Item']):
-            observed.update(parse_items(raw_features['F-Prohibited Item']))
-        if 'H-Prohibited Item' in raw_features and pd.notna(raw_features['H-Prohibited Item']):
-            observed.update(parse_items(raw_features['H-Prohibited Item']))
+        for k in ['F-Prohibited Item', 'H-Prohibited Item']:
+            if k in raw_features:
+                try:
+                    items = parse_items(raw_features[k])
+                    if items:
+                        observed.update(items)
+                except Exception:
+                    # Ignore malformed entries
+                    pass
         
         for obj in self.all_objects:
             raw_features[obj] = 1 if obj in observed else 0
