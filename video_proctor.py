@@ -130,9 +130,12 @@ class VideoProctor:
         """
         Process a pair of frames (face and hand) to extract features and make predictions.
         This version uses the new FeatureExtractor.
+        Also measures time taken for generating predictions by temporal and static separately and logs to a file.
         """
         # 1. Get processed features from the FeatureExtractor
         # This single call replaces all the logic from the old StaticProctor and feature extraction.
+        temporal_time = 0
+        static_time = 0
         processed_features_dict = self.feature_extractor.process_frame_pair(face_frame, hand_frame)
         
         # 2. Convert feature dictionary to an ordered list for the models
@@ -167,13 +170,16 @@ class VideoProctor:
                         self._temporal_scaler_warned = True
         # Only predict when we have enough frames and scaler is ready
         if len(self.feature_buffer) >= self.temporal_proctor.window_size and self._temporal_scaler_fitted:
+            temporal_start_time = time.time()
             temporal_prediction = self.temporal_proctor.make_realtime_prediction(list(self.feature_buffer))
-        
+            temporal_time = time.time() - temporal_start_time
+
         # 5. Make static model prediction on the current frame's features
         static_model_prediction = None
         if self.static_model is not None:
             # Convert features to the format expected by the model (exclude timestamp)
             # Ensure numeric dtype for scaler/model compatibility
+            static_start_time = time.time()
             static_features = np.asarray(features_list[1:], dtype=float).reshape(1, -1)
             try:
                 if self.static_scaler is not None:
@@ -182,12 +188,26 @@ class VideoProctor:
             except Exception as e:
                 print(f"Error in static model prediction: {e}")
                 static_model_prediction = 0.0
-        
+            static_time = time.time() - static_start_time
+
         # 6. Store results for visualization
         current_time = time.time()
         self.timestamps.append(current_time)
         self.predictions.append(temporal_prediction if temporal_prediction is not None else 0)
         self.static_scores.append(static_model_prediction if static_model_prediction is not None else 0)
+
+        print(f"  Temporal model prediction time: {temporal_time:.4f} seconds")
+        print(f"  Static model prediction time: {static_time:.4f} seconds")
+        # Also append timings to timer.txt next to this script
+        # try:
+        #     timer_path = os.path.join(os.path.dirname(__file__), 'timer.txt')
+        #     with open(timer_path, 'a', encoding='utf-8') as tf:
+        #         tf.write(f"Frame processed at {current_time}:\n")
+        #         tf.write(f"  Temporal model prediction time: {temporal_time:.4f} seconds\n")
+        #         tf.write(f"  Static model prediction time: {static_time:.4f} seconds\n")
+        # except Exception as _timer_err:
+        #     # Don't interrupt processing if file write fails
+        #     pass
         
         # 7. Combine results into a dictionary to return
         results = {
