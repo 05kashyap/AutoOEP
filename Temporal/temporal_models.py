@@ -4,16 +4,17 @@ import torch.nn.functional as F
 
 class LSTMModel(nn.Module):
     """LSTM-based sequence classifier with multiple pooling options."""
+    ##64 works best
     
-    def __init__(self, input_size, hidden_size=64, fc_hidden=32, 
+    def __init__(self, input_size, hidden_size=128, fc_hidden=32, 
                  output_size=1, dropout=0.35, pooling="last"):
         super(LSTMModel, self).__init__()
         
         self.pooling = pooling  # "last", "mean", or "attention"
         
         # LSTM encoder
-        self.lstm = nn.LSTM(input_size, hidden_size, batch_first=True)
-        
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers=2, batch_first=True)
+
         # Attention mechanism (only used if pooling="attention")
         if pooling == "attention":
             self.attn = nn.Linear(hidden_size, 1)
@@ -80,7 +81,7 @@ class LSTMModel(nn.Module):
         x = self.relu(x)
         x = self.fc2(x)   # logits (batch, 1)
         
-        return x
+        return x.squeeze(1)
 
 class GRUModel(nn.Module):
     """GRU-based sequence model for cheat detection"""

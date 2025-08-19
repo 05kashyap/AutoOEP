@@ -280,8 +280,7 @@ def create_optuna_objective(X_train, y_train, X_val, y_val, model_type='xgboost'
                 'objective': 'binary:logistic',
                 'eval_metric': 'logloss',
                 'random_state': 42,
-                'tree_method': 'gpu_hist' if use_gpu else 'hist',
-                'predictor': 'gpu_predictor' if use_gpu else 'auto'
+                'tree_method': 'gpu_hist' if use_gpu else 'hist'
             }
             model = xgb.XGBClassifier(**params)
         elif model_type == 'lightgbm':
@@ -312,7 +311,6 @@ def create_optuna_objective(X_train, y_train, X_val, y_val, model_type='xgboost'
                 logging.warning(f"GPU training failed for {model_type} trial; falling back to CPU. Error: {gpu_err}")
                 if model_type == 'xgboost':
                     params['tree_method'] = 'hist'
-                    params['predictor'] = 'auto'
                     model = xgb.XGBClassifier(**params)
                 elif model_type == 'lightgbm':
                     params['device_type'] = 'cpu'
@@ -365,8 +363,7 @@ def train_ensemble_model(X_train, y_train, X_test, y_test, imbalance_method='smo
         'objective': 'binary:logistic',
         'eval_metric': 'logloss',
         'random_state': seed,
-        'tree_method': 'gpu_hist' if use_gpu else 'hist',
-        'predictor': 'gpu_predictor' if use_gpu else 'auto'
+        'tree_method': 'gpu_hist' if use_gpu else 'hist'
     })
     
     models['xgboost'] = xgb.XGBClassifier(**best_xgb_params)
@@ -1007,7 +1004,7 @@ def main(train_csv_files, test_csv_files=None, use_scaling=True, imbalance_metho
         print(f"📊 Plots saved: {plot_path}")
         print(f"📋 Logs saved: {log_file}")
         
-        return model, feature_importance, best_params, model_path, scaler, all_models
+        return model, feature_importance, best_params, model_path, scaler, all_models, final_auc
         
     except Exception as e:
         logging.error(f"Error occurred: {str(e)}")
@@ -1017,7 +1014,7 @@ def main(train_csv_files, test_csv_files=None, use_scaling=True, imbalance_metho
             print(f"❌ Training failed! Check logs for details: {log_file}")
         else:
             print("❌ Training failed! Check logs for details in the logs directory.")
-        return None, None, None, None, None, None
+        return None, None, None, None, None, None, None
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Enhanced Cheating Detection Classifier")
@@ -1033,17 +1030,37 @@ if __name__ == "__main__":
     parser.add_argument('--train-dir', type=str, required=True, help='Directory containing training CSV files')
     parser.add_argument('--test-dir', type=str, required=True, help='Directory containing test CSV files')
 
-    def get_csv_files_from_dir(directory):
-        files = [
-            os.path.join(directory, f)
-            for f in os.listdir(directory)
-            if f.endswith('.csv')
-        ] if os.path.isdir(directory) else []
-        return sorted(files)
+    def get_csv_files_from_dir(pathlike):
+        """Collect CSV files from a directory, recursively, or from a single CSV path or glob pattern."""
+        import glob
+        if not pathlike:
+            return []
+        # Glob patterns
+        if any(ch in pathlike for ch in ['*', '?']):
+            files = glob.glob(pathlike, recursive=True)
+            return sorted([f for f in files if os.path.isfile(f) and f.lower().endswith('.csv')])
+        # Single file
+        if os.path.isfile(pathlike) and pathlike.lower().endswith('.csv'):
+            return [pathlike]
+        # Directory (recursive)
+        if os.path.isdir(pathlike):
+            found = []
+            for root, _, files in os.walk(pathlike):
+                for f in files:
+                    if f.lower().endswith('.csv'):
+                        found.append(os.path.join(root, f))
+            return sorted(found)
+        return []
 
     args = parser.parse_args()
     train_csv_files = get_csv_files_from_dir(args.train_dir)
     test_csv_files = get_csv_files_from_dir(args.test_dir)
+    print(f"Found {len(train_csv_files)} training CSV(s) in '{args.train_dir}'")
+    if train_csv_files:
+        print("  e.g.:", ", ".join(os.path.basename(p) for p in train_csv_files[:5]))
+    print(f"Found {len(test_csv_files)} test CSV(s) in '{args.test_dir}'")
+    if test_csv_files:
+        print("  e.g.:", ", ".join(os.path.basename(p) for p in test_csv_files[:5]))
     
     print("Enhanced Cheating Detection Classifier with Class Imbalance Handling")
     print("="*70)
@@ -1089,21 +1106,31 @@ if __name__ == "__main__":
             )
             
             if result[0] is not None:
-                # Quick evaluation to compare methods
+                # Prefer external test quick evaluation when files exist; otherwise use returned final AUC
                 model = result[0]
-                # Load test data for quick evaluation
-                test_df = pd.concat([pd.read_csv(f) for f in test_csv_files if os.path.exists(f)])
-                X_test_quick = test_df.drop(columns=['timestamp', 'is_cheating', 'split', 'video'], errors='ignore')
-                y_test_quick = test_df['is_cheating']
-                
-                if result[4] is not None:  # scaler
-                    X_test_quick = pd.DataFrame(result[4].transform(X_test_quick), columns=X_test_quick.columns)
-                
-                y_pred_proba = np.asarray(model.predict_proba(X_test_quick))[:, 1]
-                auc_score = roc_auc_score(y_test_quick, y_pred_proba)
-                
-                logging.info(f"Method {method} achieved AUC: {auc_score:.4f}")
-                
+                files = [f for f in test_csv_files if os.path.exists(f)]
+                if files:
+                    try:
+                        test_df_list = [pd.read_csv(f) for f in files]
+                        if test_df_list:
+                            test_df = pd.concat(test_df_list, ignore_index=True)
+                            X_test_quick = test_df.drop(columns=['timestamp', 'is_cheating', 'split', 'video'], errors='ignore')
+                            y_test_quick = test_df['is_cheating']
+                            if result[4] is not None:  # scaler
+                                X_test_quick = pd.DataFrame(result[4].transform(X_test_quick), columns=X_test_quick.columns)
+                            y_pred_proba = np.asarray(model.predict_proba(X_test_quick))[:, 1]
+                            auc_score = roc_auc_score(y_test_quick, y_pred_proba)
+                            logging.info(f"Method {method} achieved AUC (quick external): {auc_score:.4f}")
+                        else:
+                            auc_score = float(result[6]) if len(result) > 6 and result[6] is not None else 0.0
+                            logging.info(f"No test frames after reading; using returned AUC: {auc_score:.4f}")
+                    except Exception as eval_err:
+                        logging.warning(f"Quick external evaluation failed: {eval_err}; using returned AUC if available.")
+                        auc_score = float(result[6]) if len(result) > 6 and result[6] is not None else 0.0
+                else:
+                    auc_score = float(result[6]) if len(result) > 6 and result[6] is not None else 0.0
+                    logging.info(f"No test CSV files found; using returned AUC: {auc_score:.4f}")
+
                 if auc_score > best_auc:
                     best_auc = auc_score
                     best_result = result

@@ -1,3 +1,4 @@
+from collections import defaultdict
 import pandas as pd
 import numpy as np
 import torch
@@ -42,26 +43,97 @@ class CustomScaler:
         self.scale_ = np.array(scale)
         return self
 
-def custom_train_test_split(X, y, test_size=0.2, random_state=None):
-    """Custom implementation of train_test_split"""
+# def custom_train_test_split(X, y, test_size=0.2, random_state=None):
+#     """Custom implementation of train_test_split"""
+#     # Set random seed for reproducibility
+#     if random_state is not None:
+#         np.random.seed(random_state)
+        
+#     # Get number of samples
+#     n_samples = len(X)
+#     # Calculate number of test samples
+#     n_test = int(n_samples * test_size)
+#     # Create shuffled indices
+#     indices = np.random.permutation(n_samples)
+#     # Split indices
+#     test_indices = indices[:n_test]
+#     train_indices = indices[n_test:]
+    
+#     # Split data
+#     X_train, X_test = X[train_indices], X[test_indices]
+#     y_train, y_test = y[train_indices], y[test_indices]
+    
+#     return X_train, X_test, y_train, y_test
+def custom_train_test_split(X, y, test_size=0.2, random_state=None, stratify=None):
+    """
+    Custom implementation of train_test_split that supports stratification.
+
+    Args:
+        X (array-like): The feature data.
+        y (array-like): The target labels.
+        test_size (float): The proportion of the dataset to include in the test split.
+        random_state (int): Seed used by the random number generator for reproducibility.
+        stratify (array-like, optional): If not None, data is split in a stratified fashion, 
+                                        using this as the class labels. Defaults to None.
+
+    Returns:
+        tuple: A tuple containing (X_train, X_test, y_train, y_test).
+    """
+    # Ensure y is a 1D numpy array for consistent processing
+    y = np.array(y).ravel()
+
     # Set random seed for reproducibility
     if random_state is not None:
         np.random.seed(random_state)
         
     # Get number of samples
     n_samples = len(X)
-    # Calculate number of test samples
-    n_test = int(n_samples * test_size)
-    # Create shuffled indices
-    indices = np.random.permutation(n_samples)
-    # Split indices
-    test_indices = indices[:n_test]
-    train_indices = indices[n_test:]
     
-    # Split data
-    X_train, X_test = X[train_indices], X[test_indices]
-    y_train, y_test = y[train_indices], y[test_indices]
+    # --- Stratified Splitting Logic ---
+    if stratify is not None:
+        # Dictionary to store indices for each class
+        class_indices = defaultdict(list)
+        # Use the provided stratify labels (flattened) for class-wise splitting
+        strat_labels = np.array(stratify).ravel()
+        for i, label in enumerate(strat_labels):
+            class_indices[label].append(i)
+            
+        train_indices, test_indices = [], []
+        
+        # For each class, split its indices into train and test sets
+        for label, indices in class_indices.items():
+            n_class_samples = len(indices)
+            n_test_class = max(1, int(n_class_samples * test_size)) # Ensure at least one sample
+            
+            # Shuffle indices for the current class
+            shuffled_class_indices = np.random.permutation(indices)
+            
+            # Append split indices to the main lists
+            test_indices.extend(shuffled_class_indices[:n_test_class])
+            train_indices.extend(shuffled_class_indices[n_test_class:])
+            
+        # Shuffle the final train and test indices to mix classes
+        train_indices = np.random.permutation(train_indices)
+        test_indices = np.random.permutation(test_indices)
+
+    # --- Standard Random Splitting Logic (Original code) ---
+    else:
+        # Create shuffled indices for the entire dataset
+        indices = np.random.permutation(n_samples)
+        # Calculate number of test samples
+        n_test = int(n_samples * test_size)
+        # Split indices
+        test_indices = indices[:n_test]
+        train_indices = indices[n_test:]
     
+    # --- Data Splitting ---
+    # Use np.array() to handle different input types (like lists) gracefully
+    X_arr = np.array(X)
+    y_arr = np.array(y)
+
+    X_train, X_test = X_arr[train_indices], X_arr[test_indices]
+    y_train, y_test = y_arr[train_indices], y_arr[test_indices]
+
     return X_train, X_test, y_train, y_test
 
 def custom_confusion_matrix(y_true, y_pred):
@@ -334,7 +406,7 @@ class TemporalProctor:
             criterion = nn.BCELoss()
         
         # optimizer = optim.Adam(self.model.parameters(), lr=lr)
-        optimizer = optim.AdamW(self.model.parameters(), lr=1e-3, weight_decay=1e-5)
+        optimizer = optim.AdamW(self.model.parameters(), lr=1e-3, weight_decay=1e-4)
 
         # Early stopping parameters
         best_val_loss = float('inf')
@@ -601,12 +673,26 @@ class TemporalProctor:
         # Predict
         try:
             prediction = self.predict_sequence(model_input)
-            print(f"DEBUG: Raw prediction: {prediction}")
-            return prediction[0][0] if prediction is not None else None
+            print(f"DEBUG: Raw prediction: {prediction} (type={type(prediction)})")
+
+            if prediction is None:
+                return None
+
+            # If prediction is a tensor, convert to numpy/scalar
+            if isinstance(prediction, torch.Tensor):
+                prediction = prediction.detach().cpu().numpy()
+
+            # Handle different shapes
+            if np.ndim(prediction) == 0:         # scalar
+                return float(prediction)
+            elif np.ndim(prediction) == 1:       # shape (1,)
+                return float(prediction[0])
+            elif np.ndim(prediction) == 2:       # shape (1, 1)
+                return float(prediction[0][0])
         except Exception as e:
             print(f"ERROR in prediction: {e}")
             return None
-    
+
     def plot_training_history(self, history):
         """Plot training history"""
         plt.figure(figsize=(12, 5))
@@ -778,16 +864,16 @@ if __name__ == "__main__":
     feature_cols.remove('timestamp')
     feature_cols.remove('is_cheating')
     train_numeric_cols = combined_train_df[feature_cols].select_dtypes(include=[np.number]).columns.tolist()
-    print(f"Temporal training feature columns: {train_numeric_cols}")
+    # print(f"Temporal training feature columns: {train_numeric_cols}")
     
     # Split training data into train and validation (80% train, 20% validation)
     X_train, X_val, y_train, y_val = custom_train_test_split(
-        X_train_full, y_train_full, test_size=0.2, random_state=42
+        X_train_full, y_train_full, test_size=0.2, random_state=42, stratify=y_train_full
     )
     
-    print(f"Training data shape: {X_train.shape}")
-    print(f"Validation data shape: {X_val.shape}")
-    
+    print(f"Training data shape: {X_train.shape}, {y_train.shape}")
+    print(f"Validation data shape: {X_val.shape}, {y_val.shape}")
+
     # Build and train the model
     history = proctor.train(X_train, y_train, X_val, y_val, epochs=50, batch_size=32, threshold=threshold)
 
