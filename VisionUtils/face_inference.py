@@ -103,25 +103,83 @@ face_attributes = [
 #         print(f"Error during verification: {e}")
 #         return False
 
-def verify_id(frame, frame_landmark, referenceframe, reference_landmark):
+# def verify_id(frame, frame_landmark, referenceframe, reference_landmark):
+#     try:
+#         frame_new = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+#         # referenceframe = cv2.imread(r"C:\Users\singl\Desktop\Bhuvanesh\NITK\SEM4\IT255_AI\Project Files\DATASET\bhuv_fac\ID.png")
+#         referenceframe = cv2.cvtColor(referenceframe, cv2.COLOR_BGR2RGB)
+#         # result = DeepFace.verify(img1_path=frame_new, img2_path=referenceframe, detector_backend='mediapipe', model_name='ArcFace')
+#         result = DeepFace.verify_with_landmarks(
+#             img1_path=frame_new,
+#             face_landmarker_result1=frame_landmark,
+#             img2_path=referenceframe,
+#             face_landmarker_result2=reference_landmark,
+#             model_name="ArcFace",
+#             distance_metric="cosine"
+#             )
+#         print(f"Verification result: {result}")
+#         return result['verified']
+#     except Exception as e:
+#         print("Error in DeepFace verification:", e)
+#         return False
+def landmark_to_embedding(frame, face_input):
+    """
+    Compute DeepFace embedding from Mediapipe output.
+    face_input can be either:
+      - FaceLandmarkerResult (first face will be used), OR
+      - NormalizedLandmarkList (single face landmarks).
+    Returns a single embedding (list of floats) or None.
+    """
+    # Case 1: Full FaceLandmarkerResult → take first face
+    if hasattr(face_input, "face_landmarks"):
+        if not face_input.face_landmarks:
+            return None  # no faces detected
+        landmarks = face_input.face_landmarks[0]
+    else:
+        # Case 2: Already a single face's landmarks
+        landmarks = face_input
+
+    h, w, _ = frame.shape
+    xs = [lm.x * w for lm in landmarks]
+    ys = [lm.y * h for lm in landmarks]
+
+    x_min, x_max = int(min(xs)), int(max(xs))
+    y_min, y_max = int(min(ys)), int(max(ys))
+
+    if x_max <= x_min or y_max <= y_min:
+        return None  # invalid crop
+
+    cropped_face = frame[y_min:y_max, x_min:x_max]
+
     try:
-        frame_new = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        # referenceframe = cv2.imread(r"C:\Users\singl\Desktop\Bhuvanesh\NITK\SEM4\IT255_AI\Project Files\DATASET\bhuv_fac\ID.png")
-        referenceframe = cv2.cvtColor(referenceframe, cv2.COLOR_BGR2RGB)
-        # result = DeepFace.verify(img1_path=frame_new, img2_path=referenceframe, detector_backend='mediapipe', model_name='ArcFace')
-        result = DeepFace.verify_with_landmarks(
-            img1_path=frame_new,
-            face_landmarker_result1=frame_landmark,
-            img2_path=referenceframe,
-            face_landmarker_result2=reference_landmark,
-            model_name="ArcFace",
-            distance_metric="cosine"
-            )
-        print(f"Verification result: {result}")
-        return result['verified']
+        reps = DeepFace.represent(
+            img_path=cropped_face,
+            model_name="ArcFace",   # 512-dim embeddings
+            enforce_detection=False
+        )
+        return reps[0]["embedding"]
     except Exception as e:
-        print("Error in DeepFace verification:", e)
+        print("Error in embedding:", e)
+        return None
+
+
+def verify_id(frame, frame_landmark_result, reference_frame, reference_landmark_result):
+    frame_embedding = landmark_to_embedding(frame, frame_landmark_result)
+    reference_embedding = landmark_to_embedding(reference_frame, reference_landmark_result)
+    verification = False
+    if frame_embedding is None or reference_embedding is None:
+        print("Error: Could not compute embeddings.")
         return False
+
+    # Compare embeddings using cosine similarity
+    if frame_embedding is not None and reference_embedding is not None:
+        result = DeepFace.verify(img1_path=reference_embedding,
+                                         img2_path=frame_embedding,
+                                         model_name="ArcFace",
+                                         silent=True)
+        print(result)
+        verification = result['verified']
+    return verification
 
 def get_landmark_details(result, input_image: mp.Image, timestamp_ms: int):
     face_details = FaceDetails(result, input_image.numpy_view())
@@ -155,14 +213,21 @@ def get_landmark_details(result, input_image: mp.Image, timestamp_ms: int):
 # results = []
 
 def get_face_inference(frame, target_frame, landmarker):
+    face_time = time.time()
     mp_image_frame = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
     mp_image_target = mp.Image(image_format=mp.ImageFormat.SRGB, data=target_frame)
     face_landmarker_result = landmarker.detect(mp_image_frame)
     target_landmarker_result = landmarker.detect(mp_image_target)
     output_details = get_landmark_details(face_landmarker_result, mp_image_frame, 0)
     # verification_result = verify_id(mp_image.numpy_view().copy(), target_frame)
-    verification_result = verify_id(mp_image_frame.numpy_view().copy(), face_landmarker_result, mp_image_target.numpy_view().copy(), target_landmarker_result)
+    verification_result = verify_id(frame=frame,
+                                    frame_landmark_result=face_landmarker_result,
+                                    reference_frame=target_frame,
+                                    reference_landmark_result=target_landmarker_result)
+    
     output_details['verification_result'] = verification_result
+    face_time = time.time() - face_time
+    print(f"Face processing time: {face_time:.4f} seconds")
     return output_details
 
 # Process each image in the directory
