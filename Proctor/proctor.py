@@ -1,3 +1,4 @@
+import time
 import cv2
 import torch
 import numpy as np
@@ -82,6 +83,7 @@ class StaticProctor:
         self.landmarker = FaceLandmarker.create_from_options(self.options)
         
     def process_frames(self, target_frame, face_frame, hand_frame):
+        hand_time = time.time()
         output = {}
         
         # Hand detection
@@ -114,6 +116,7 @@ class StaticProctor:
                 if src_key in hand_dict:
                     output[dst_key] = hand_dict[src_key]
 
+        hand_time = time.time() - hand_time
         # Face verification
         # processed_face_frame = enhance_frame(cv2.cvtColor(face_frame, cv2.COLOR_BGR2RGB))
         # processed_target = enhance_frame(cv2.cvtColor(target_frame, cv2.COLOR_BGR2RGB)) if target_frame.dtype != np.uint8 else target_frame
@@ -140,7 +143,7 @@ class StaticProctor:
         #     output['Eye Direction'] = face_details.iris_pos
         #     output['Mouth'] = face_details.mouth_zone
         #     output['Number of people'] = face_details.num_faces
-
+        print(f"Hand processing time: {hand_time:.4f} seconds")
         face_details = get_face_inference(face_frame, target_frame, self.landmarker)
 
         output = output | face_details ## combines both dicts
