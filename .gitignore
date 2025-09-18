@@ -1,3 +1,12 @@
 __pycache__
 *.pyc
-
+Outputs
+Datasets/Videos
+Media
+OEPFrame_Dataset
+run.bat
+Datasets/front_test.avi
+Datasets/ID.png
+Datasets/side_test.avi
+removables/
+best_models/

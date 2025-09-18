@@ -1,13 +1,16 @@
+import time
 import cv2
-from deepface import DeepFace
+import torch
 import numpy as np
 import mediapipe as mp
-from cheat_prob import calculate_cheat_score
-from FaceDetailsCalculator import FaceDetails
-import torch
-from handpose import inference
 from ultralytics import YOLO
-from face_inference import get_face_inference
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from VisionUtils.FaceDetailsCalculator import FaceDetails
+from VisionUtils.handpose import inference
+from VisionUtils.face_inference import get_face_inference
 
 BaseOptions = mp.tasks.BaseOptions
 FaceLandmarker = mp.tasks.vision.FaceLandmarker
@@ -66,19 +69,21 @@ def preprocess_for_object_detection(image):
 
 
 class StaticProctor:
-    def __init__(self, yolo_model, media_pipe, model_path):
+    def __init__(self, yolo_model, media_pipe, mediapipe_model_path):
         self.yolo_model = yolo_model
         self.media_pipe = media_pipe
-        
+        with open(mediapipe_model_path, 'rb') as f:
+            buffer = f.read()
         # Initialize MediaPipe with IMAGE mode instead of LIVE_STREAM
         self.options = FaceLandmarkerOptions(
-                    base_options=BaseOptions(model_asset_path=model_path),
+                    base_options=BaseOptions(model_asset_buffer=buffer),
                     running_mode=VisionRunningMode.IMAGE,
                     num_faces = 3)
             
         self.landmarker = FaceLandmarker.create_from_options(self.options)
         
     def process_frames(self, target_frame, face_frame, hand_frame):
+        hand_time = time.time()
         output = {}
         
         # Hand detection
@@ -111,6 +116,7 @@ class StaticProctor:
                 if src_key in hand_dict:
                     output[dst_key] = hand_dict[src_key]
 
+        hand_time = time.time() - hand_time
         # Face verification
         # processed_face_frame = enhance_frame(cv2.cvtColor(face_frame, cv2.COLOR_BGR2RGB))
         # processed_target = enhance_frame(cv2.cvtColor(target_frame, cv2.COLOR_BGR2RGB)) if target_frame.dtype != np.uint8 else target_frame
@@ -137,13 +143,13 @@ class StaticProctor:
         #     output['Eye Direction'] = face_details.iris_pos
         #     output['Mouth'] = face_details.mouth_zone
         #     output['Number of people'] = face_details.num_faces
-
+        print(f"Hand processing time: {hand_time:.4f} seconds")
         face_details = get_face_inference(face_frame, target_frame, self.landmarker)
 
         output = output | face_details ## combines both dicts
 
         # Calculate cheat score
-        output['Cheat Score'] = calculate_cheat_score(output)
+        output['Cheat Score'] = 1#calculate_cheat_score(output)
         return output
 
     def __del__(self):
@@ -155,7 +161,7 @@ class StaticProctor:
 def test():
     # Example of how to use the StaticProctor
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = YOLO('OEP_YOLOv11n.pt')
+    model = YOLO('Models/OEP_YOLOv11n.pt')
 
     
     mpHands = mp.solutions.hands
