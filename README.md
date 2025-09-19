@@ -2,6 +2,10 @@
 ## Automated Online Exam Proctoring System
 AutoOEP is an advanced online exam proctoring system designed to ensure the integrity and security of online examinations. It leverages cutting-edge technologies such as facial recognition, behavior analysis, and real-time monitoring to prevent cheating and maintain a fair testing environment. It utilizes a combination of computer vision, machine learning, and deep learning techniques to monitor test-takers effectively. Using two webcams, it captures both frontal and side views of the test-taker, allowing for comprehensive monitoring of their actions and surroundings.
 
+> **Note:** Our work has been submitted for peer review at *EAAI 2026*.  
+> The preprint is available on [arXiv](https://arxiv.org/abs/2509.10887).
+
+
 ![Exam Proctor flow](Assets/OEP_Final_Flow.png) 
 
 ## Libraries and Frameworks Used
