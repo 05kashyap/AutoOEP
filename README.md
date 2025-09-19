@@ -1,130 +1,48 @@
-# CheatusDeletus
+# AutoOEP
+## Automated Online Exam Proctoring System
+AutoOEP is an advanced online exam proctoring system designed to ensure the integrity and security of online examinations. It leverages cutting-edge technologies such as facial recognition, behavior analysis, and real-time monitoring to prevent cheating and maintain a fair testing environment. It utilizes a combination of computer vision, machine learning, and deep learning techniques to monitor test-takers effectively. Using two webcams, it captures both frontal and side views of the test-taker, allowing for comprehensive monitoring of their actions and surroundings.
 
-## Overview
+![Exam Proctor flow](Assets/OEP_Final_Flow.png) 
 
-CheatusDeletus is a video proctoring pipeline for detecting cheating behavior in exam settings using computer vision and machine learning. The system processes video data, extracts features, trains static and temporal models, and provides real-time cheat score predictions.
+## Libraries and Frameworks Used
+- **OpenCV**: For real-time video processing 
+- **DeepFace**: For facial recognition and verification
+- **Mediapipe**: For pose estimation and behavior analysis
+- **YOLOv11**: For object detection
+- **LSTM**: For monitoring the sequence of actions and detecting suspicious behavior
+- **LightGBM**: For providing static support in behavior analysis and benchmarking
+- **PyTorch**: For building and training deep learning models
 
----
+## Features
+### Face Module
+![Face Module](Assets/OEP_Front_flow.jpeg)
+- **Face Detection**: Utilizes Mediapipe to detect and count number of faces in the frame.
+- **Face Recognition**: Uses DeepFace to verify the identity of the test-taker against a pre-registered image.
+- **Pose Estimation**: Employs Mediapipe to monitor head movements, gaze, and track eyes and mouth to detect if the test-taker is looking away or talking.
 
-## Pipeline Steps
+### Hand Module
+![Hand Module](Assets/OEP_Side_flow.jpeg)
+- **Hand Tracking**: Uses Mediapipe to track hand movements and positions.
+- **Object Detection**: Implements YOLOv11 to identify unauthorized objects (e.g., phones, notes) in the test-taker's vicinity.
+- **Behavior Analysis**: Analyzes hand movements to detect suspicious behaviors such as reaching out for unauthorized materials.
 
-### 1. **Extract Frames from Videos**
+### Behavior Module
+- **Action Sequence Monitoring**: Utilizes LSTM to analyze the sequence of actions and detect patterns indicative of cheating.
+- **Static Behavior Analysis**: Uses LightGBM to provide additional support in identifying unusual behaviors.
 
-Use `video_parse.py` to extract frames from your raw video files and sort them into `cheating_frames` and `not_cheating_frames` folders.
-
-**Usage:**
-```bash
-python Dataset_Parser/video_parse.py
-```
-- Follow the prompts to specify cheating intervals or classify all frames.
-- Output: `cheating_frames` and `not_cheating_frames` directories for each video.
-
----
-
-### 2. **Extract Features from Frames**
-
-Use `save_features.py` to process the sorted frames and extract features for each frame pair (face and hand). This generates raw CSV files for each video.
-
-**Usage:**
-```bash
-python Proctor/save_features.py
-```
-- Configure `dataset_path` and `target_frame_path` as needed.
-- Output: CSV files in `Proctor/results/` (one per video and a combined file).
-
----
-
-### 3. **Process Raw CSVs for Training/Testing**
-
-Use `Static/process_csv.py` to clean and standardize the raw CSVs, ensuring consistent feature order and handling missing values.
-
-**Usage:**
-```bash
-python Static/process_csv.py
-```
-- Input: CSVs from `Proctor/results/`
-- Output: Cleaned CSVs in `processed_results/` (ready for model training)
-
----
-
-### 4. **Train Static Model**
-
-Use `Static/static_trainer.py` to train static models (LightGBM, XGBoost, RandomForest) on the processed data. The best model and scaler are saved for later use.
-
-**Usage:**
-```bash
-python Static/static_trainer.py
-```
-- Input: Processed CSVs from `processed_results/`
-- Output: Best static model (`Models/*_cheating_model_*.pkl`), scaler, and metadata.
-
----
-
-### 5. **Train Temporal Model**
-
-Use `Temporal/temporal_trainer.py` to train an LSTM/GRU-based temporal model on the processed data.
-
-**Usage:**
-```bash
-python Temporal/temporal_trainer.py
-```
-- Input: Processed CSVs from `processed_results/`
-- Output: Trained temporal model (`Models/temporal_proctor_trained_on_processed.pt`)
-
----
-
-### 6. **Run Real-Time Cheating Detection**
-
-Use `video_proctor.py` to process test videos and get real-time cheat score predictions using both static and temporal models.
-
-**Usage:**
-```bash
-bash run.sh
-```
-or
-```bash
-python video_proctor.py \
-  --face <face_video_path> \
-  --hand <hand_video_path> \
-  --target <target_image_path> \
-  --output <output_dir> \
-  --lstm-model <temporal_model_path> \
-  --static-model <static_model_path> \
-  --static-scaler <scaler_path> \
-  --static-metadata <metadata_path> \
-  --yolo-model <yolo_model_path> \
-  --mediapipe-task <mediapipe_task_path> \
-  --display
-```
-- Output: Real-time predictions and annotated video (if `--output` is specified).
-
----
-
-## Notes
-
-- Ensure feature order and column consistency between all steps.
-- Always use processed CSVs from `processed_results/` for training/testing.
-- For best results, verify feature extraction and model input/output shapes using debug mode in `video_proctor.py`.
-
----
-
-## Directory Structure
-
-```
-CheatusDeletus/
-├── Dataset_Parser/
-│   └── video_parse.py
-├── Proctor/
-│   └── save_features.py
-├── Static/
-│   ├── process_csv.py
-│   └── static_trainer.py
-├── Temporal/
-│   └── temporal_trainer.py
-├── processed_results/
-├── Models/
-├── Outputs/
-├── run.sh
-└── video_proctor.py
-```
-
+## Installation
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/05kashyap/AutoOEP.git
+   cd AutoOEP
+    ```
+2. Install the required dependencies:
+    ```bash
+    pip install -r requirements.txt
+    ```
+3. Extract the pretrained models from the `final_models.zip` file and place them in the `Models` directory.
+4. Make sure to have two webcams connected to your system, one for frontal view and another for side view.
+5. Make sure to have front and side videos of the test-taker for testing.
+6. Upload the registered image of the test taker in same folder.
+7. Correct the paths in `run.bat` or `run.sh` file as per your setup.
+8. Run the `run.bat` or `run.sh` file as per your OS.

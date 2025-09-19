@@ -1,0 +1,11 @@
+tensorflow==2.12.0
+torch
+mediapipe
+opencv-python
+numpy
+Pillow
+deepface
+ultralytics
+matplotlib
+scikit-learn
+pandas
