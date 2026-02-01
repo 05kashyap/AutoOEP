@@ -1,10 +1,10 @@
 __pycache__
 *.pyc
 Outputs
+Dataset/
 Datasets/Videos
 Media
 OEPFrame_Dataset
-run.bat
 Datasets/front_test.avi
 Datasets/ID.png
 Datasets/side_test.avi
