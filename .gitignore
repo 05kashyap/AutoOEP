@@ -1,5 +1,6 @@
 __pycache__
 *.pyc
+*.avi
 Outputs
 Dataset/
 Datasets/Videos

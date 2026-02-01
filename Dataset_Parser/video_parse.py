@@ -83,9 +83,15 @@ def parser(video_dir: str, video_id: int, output_base: str = "Dataset") -> Tuple
     os.makedirs(front_folder, exist_ok=True)
     os.makedirs(side_folder, exist_ok=True)
     
-    # Open both videos
-    front_video = cv2.VideoCapture(front_video_path)
-    side_video = cv2.VideoCapture(side_video_path)
+    # Open both videos with FFMPEG backend for better codec support
+    # Try FFMPEG first, fall back to default if not available
+    front_video = cv2.VideoCapture(front_video_path, cv2.CAP_FFMPEG)
+    side_video = cv2.VideoCapture(side_video_path, cv2.CAP_FFMPEG)
+    
+    if not front_video.isOpened():
+        front_video = cv2.VideoCapture(front_video_path)
+    if not side_video.isOpened():
+        side_video = cv2.VideoCapture(side_video_path)
     
     front_fps = front_video.get(cv2.CAP_PROP_FPS)
     side_fps = side_video.get(cv2.CAP_PROP_FPS)
@@ -95,7 +101,9 @@ def parser(video_dir: str, video_id: int, output_base: str = "Dataset") -> Tuple
     if abs(front_fps - side_fps) > 0.1:
         print(f"Warning: FPS mismatch - front: {front_fps}, side: {side_fps}. Using front FPS.")
     
-    frame_count = 0
+    frame_index = 0  # Logical frame index for timestamp calculation
+    saved_count = 0  # Successfully saved frame pairs
+    skipped_count = 0  # Skipped due to corruption
     frame_ids = []
     
     print(f"\nParsing vid{video_id} (front + side)...")
@@ -111,23 +119,50 @@ def parser(video_dir: str, video_id: int, output_base: str = "Dataset") -> Tuple
         if not ret_front or not ret_side:
             break
         
+        # Check for corrupted/empty frames and skip them
+        if frame_front is None or frame_side is None:
+            skipped_count += 1
+            frame_index += 1
+            continue
+        
+        # Additional check: skip if frame is mostly black/corrupted (optional heuristic)
+        # A corrupted frame often has very low mean pixel values or is uniform
+        try:
+            front_mean = frame_front.mean()
+            side_mean = frame_side.mean()
+            
+            # Skip if frame appears corrupted (all black or invalid)
+            if front_mean < 1.0 or side_mean < 1.0:
+                skipped_count += 1
+                frame_index += 1
+                continue
+        except Exception:
+            skipped_count += 1
+            frame_index += 1
+            continue
+        
         # Generate timestamp-based filename
-        timestamp = format_timestamp(frame_count / fps)
+        timestamp = format_timestamp(frame_index / fps)
         frame_filename = f"{timestamp}.jpg"
         
         # Save frames to respective folders
         front_output = os.path.join(front_folder, frame_filename)
         side_output = os.path.join(side_folder, frame_filename)
         
-        cv2.imwrite(front_output, frame_front)
-        cv2.imwrite(side_output, frame_side)
+        try:
+            cv2.imwrite(front_output, frame_front)
+            cv2.imwrite(side_output, frame_side)
+            frame_ids.append(timestamp)
+            saved_count += 1
+        except Exception as e:
+            print(f"  Warning: Failed to save frame {frame_index}: {e}")
+            skipped_count += 1
         
-        frame_ids.append(timestamp)
-        frame_count += 1
+        frame_index += 1
         
         # Print progress every 500 frames
-        if frame_count % 500 == 0:
-            print(f"  Processed {frame_count} frames...")
+        if frame_index % 500 == 0:
+            print(f"  Processed {frame_index} frames (saved: {saved_count}, skipped: {skipped_count})...")
     
     front_video.release()
     side_video.release()
@@ -139,10 +174,10 @@ def parser(video_dir: str, video_id: int, output_base: str = "Dataset") -> Tuple
         for frame_id in frame_ids:
             writer.writerow({'frame_id': frame_id, 'label': 0})
     
-    print(f"  Completed: {frame_count} frame pairs extracted")
+    print(f"  Completed: {saved_count} frame pairs saved, {skipped_count} skipped")
     print(f"  CSV saved: {csv_path}")
     
-    return output_folder, fps, frame_count
+    return output_folder, fps, saved_count
 
 
 def get_annotation_intervals() -> List[Tuple[float, float]]:
